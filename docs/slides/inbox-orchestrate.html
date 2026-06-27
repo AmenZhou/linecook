@@ -1,0 +1,1987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inbox &amp; Orchestrate — Autonomous Background Jobs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&display=swap" rel="stylesheet">
+<style>
+/* ===========================================
+   RESET
+   =========================================== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ===========================================
+   VIEWPORT BASE CSS (mandatory — do not edit)
+   =========================================== */
+html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--stage-bg, #0F1318);
+}
+.deck-viewport {
+    position: fixed; inset: 0;
+    overflow: hidden;
+    background: var(--stage-bg, #0F1318);
+}
+.deck-stage {
+    position: absolute; left: 0; top: 0;
+    width: 1920px; height: 1080px;
+    overflow: hidden; transform-origin: 0 0;
+    background: var(--slide-bg, #0F1318);
+}
+.slide {
+    position: absolute; inset: 0;
+    width: 1920px; height: 1080px;
+    overflow: hidden; display: block;
+    visibility: hidden; opacity: 0; pointer-events: none;
+    background: var(--slide-bg, #0F1318);
+}
+.slide.active, .slide.visible {
+    visibility: visible; opacity: 1; pointer-events: auto; z-index: 1;
+}
+img, video, canvas, svg { max-width: 100%; max-height: 100%; }
+.deck-controls { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 1000; }
+@media print {
+    html, body { width: 1920px; height: auto; overflow: visible; background: #fff; }
+    .deck-viewport { position: static; overflow: visible; background: #fff; }
+    .deck-stage { position: static; width: auto; height: auto; transform: none !important; background: none; }
+    .slide { position: relative; display: block !important; visibility: visible !important; opacity: 1 !important; pointer-events: auto !important; width: 1920px; height: 1080px; break-after: page; page-break-after: always; }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    .deck-controls { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.2s !important; }
+}
+
+/* ===========================================
+   THEME — MISSION CONTROL
+   Change :root values to restyle the whole deck
+   =========================================== */
+:root {
+    /* Backgrounds */
+    --stage-bg: #0F1318;
+    --slide-bg: #0F1318;
+    --surface: #161B23;
+    --surface-2: #1D232D;
+    --surface-3: #222933;
+
+    /* Accent palette */
+    --amber: #F59E0B;
+    --amber-dim: #B45309;
+    --amber-faint: rgba(245, 158, 11, 0.10);
+    --amber-border: rgba(245, 158, 11, 0.25);
+    --teal: #14B8A6;
+    --teal-faint: rgba(20, 184, 166, 0.10);
+    --teal-border: rgba(20, 184, 166, 0.25);
+    --red: #F87171;
+
+    /* Text */
+    --text-primary: #E2E8F0;
+    --text-secondary: #94A3B8;
+    --text-dim: #475569;
+
+    /* Borders */
+    --border: #1E2633;
+    --border-lit: #2D3748;
+
+    /* Fonts */
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+
+    /* Animation */
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --dur: 0.6s;
+}
+
+/* ===========================================
+   SHARED STRUCTURAL ELEMENTS
+   Header, footer, left accent, grid — used on every slide
+   =========================================== */
+
+/* Subtle amber grid on all slides */
+.slide::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+        linear-gradient(rgba(245,158,11,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(245,158,11,0.035) 1px, transparent 1px);
+    background-size: 80px 80px;
+    pointer-events: none; z-index: 0;
+}
+
+/* Header bar — 72px tall, amber bottom border */
+.s-header {
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 72px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--amber);
+    display: flex; align-items: center;
+    padding: 0 80px;
+    justify-content: space-between;
+    z-index: 20;
+}
+
+.s-header-brand { display: flex; align-items: center; gap: 28px; }
+
+.s-header-logo {
+    font-family: var(--mono);
+    font-size: 20px; font-weight: 700;
+    color: var(--amber); letter-spacing: 0.14em; text-transform: uppercase;
+}
+
+.s-header-sep { width: 1px; height: 28px; background: var(--amber-border); }
+
+.s-header-crumb {
+    font-family: var(--mono); font-size: 17px; font-weight: 400;
+    color: var(--text-dim); letter-spacing: 0.04em;
+}
+.s-header-crumb .hl { color: rgba(245,158,11,0.65); }
+
+.s-header-meta { display: flex; align-items: center; gap: 28px; }
+
+.status-chip {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 15px; font-weight: 500;
+    color: var(--teal); background: var(--teal-faint);
+    border: 1px solid var(--teal-border);
+    padding: 5px 16px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--teal); box-shadow: 0 0 6px var(--teal);
+    animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+.s-header-date {
+    font-family: var(--mono); font-size: 15px; color: var(--text-dim); letter-spacing: 0.04em;
+}
+
+/* Amber left accent bar */
+.s-left-accent {
+    position: absolute;
+    top: 72px; left: 0; bottom: 52px; width: 4px;
+    background: linear-gradient(180deg, var(--amber) 0%, rgba(245,158,11,0.2) 70%, transparent 100%);
+    z-index: 15;
+}
+
+/* Bottom status bar — 52px tall */
+.s-footer {
+    position: absolute;
+    bottom: 0; left: 0; right: 0; height: 52px;
+    background: var(--surface);
+    border-top: 1px solid var(--border-lit);
+    display: flex; align-items: center;
+    padding: 0 80px; justify-content: space-between;
+    z-index: 20;
+}
+.s-footer-left {
+    display: flex; align-items: center; gap: 40px;
+    font-family: var(--mono); font-size: 14px; color: var(--text-dim); letter-spacing: 0.04em;
+}
+.s-footer-left .hl { color: rgba(245,158,11,0.55); }
+.s-footer-counter {
+    font-family: var(--mono); font-size: 14px; color: var(--amber); letter-spacing: 0.1em;
+}
+
+/* Slide body area (between header and footer) */
+.s-body {
+    position: absolute;
+    top: 72px; bottom: 52px; left: 4px; right: 0;
+    z-index: 10;
+}
+
+/* ===========================================
+   ENTRANCE ANIMATION SYSTEM
+   Elements with .reveal animate when .slide.visible is set
+   =========================================== */
+.reveal {
+    opacity: 0; transform: translateY(22px);
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.slide.visible .reveal { opacity: 1; transform: translateY(0); }
+
+.reveal-left {
+    opacity: 0; transform: translateX(-24px);
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.slide.visible .reveal-left { opacity: 1; transform: translateX(0); }
+
+.reveal-right {
+    opacity: 0; transform: translateX(24px);
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.slide.visible .reveal-right { opacity: 1; transform: translateX(0); }
+
+/* Stagger delays */
+.d1 { transition-delay: 0.08s; }
+.d2 { transition-delay: 0.18s; }
+.d3 { transition-delay: 0.28s; }
+.d4 { transition-delay: 0.38s; }
+.d5 { transition-delay: 0.48s; }
+.d6 { transition-delay: 0.58s; }
+
+/* ===========================================
+   SLIDE 1 — TITLE
+   =========================================== */
+.slide-title .s-body {
+    display: flex; align-items: stretch;
+}
+
+.title-main-col {
+    flex: 1;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 0 100px 0 100px;
+}
+
+.title-eyebrow {
+    font-family: var(--mono); font-size: 19px; font-weight: 500;
+    color: var(--teal); letter-spacing: 0.22em; text-transform: uppercase;
+    margin-bottom: 36px;
+    display: flex; align-items: center; gap: 16px;
+}
+.title-eyebrow::before {
+    content: ''; display: inline-block;
+    width: 32px; height: 2px; background: var(--teal);
+}
+
+.title-h1 {
+    font-family: var(--mono); font-size: 104px; font-weight: 700;
+    line-height: 0.93; letter-spacing: -0.03em;
+    color: var(--text-primary); margin: 0 0 36px 0;
+}
+.title-h1 .amber { color: var(--amber); }
+
+.title-sub {
+    font-family: var(--sans); font-size: 27px; font-weight: 300; font-style: italic;
+    color: var(--text-secondary); line-height: 1.65; margin: 0 0 68px 0;
+    max-width: 800px;
+}
+
+.title-tags { display: flex; gap: 16px; flex-wrap: wrap; }
+
+.ttag {
+    font-family: var(--mono); font-size: 17px; font-weight: 500;
+    color: var(--amber); background: var(--amber-faint);
+    border: 1px solid var(--amber-border);
+    padding: 9px 22px; letter-spacing: 0.07em; text-transform: uppercase;
+    position: relative;
+}
+.ttag[data-n]::before {
+    content: attr(data-n);
+    font-size: 10px; color: var(--amber-dim);
+    position: absolute; top: 3px; left: 7px;
+    letter-spacing: 0.1em;
+}
+
+/* Title right panel — flow diagram */
+.title-flow-col {
+    width: 460px; flex-shrink: 0;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 60px 72px 60px 36px;
+    border-left: 1px solid var(--border-lit);
+}
+
+.flow-panel-heading {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    color: var(--amber); letter-spacing: 0.28em; text-transform: uppercase;
+    margin-bottom: 36px; padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-lit);
+}
+
+.flow-step {
+    display: flex; align-items: flex-start; gap: 18px; margin-bottom: 10px;
+}
+.flow-icon {
+    width: 44px; height: 44px; flex-shrink: 0;
+    background: var(--amber-faint); border: 1px solid var(--amber-border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 18px; color: var(--amber);
+}
+.flow-text { padding-top: 2px; }
+.flow-name {
+    font-family: var(--mono); font-size: 18px; font-weight: 600;
+    color: var(--text-primary); letter-spacing: 0.02em; display: block; margin-bottom: 1px;
+}
+.flow-desc {
+    font-family: var(--sans); font-size: 15px; font-weight: 300;
+    color: var(--text-dim); display: block;
+}
+.flow-conn {
+    width: 1px; height: 18px;
+    background: linear-gradient(var(--amber-dim), transparent);
+    margin-left: 21px; margin-bottom: 10px;
+}
+
+/* ===========================================
+   SLIDE 2 — WHY WE BUILT THIS
+   =========================================== */
+.slide-why .s-body {
+    display: flex; flex-direction: column;
+    padding: 72px 100px 60px 100px;
+}
+
+.section-label {
+    font-family: var(--mono); font-size: 18px; font-weight: 500;
+    color: var(--teal); letter-spacing: 0.2em; text-transform: uppercase;
+    margin-bottom: 20px;
+    display: flex; align-items: center; gap: 14px;
+}
+.section-label::before {
+    content: ''; display: inline-block;
+    width: 24px; height: 2px; background: var(--teal);
+}
+
+.why-title {
+    font-family: var(--mono); font-size: 72px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.02em; line-height: 1;
+    margin-bottom: 64px;
+}
+.why-title .amber { color: var(--amber); }
+
+.why-cards {
+    flex: 1; display: flex; gap: 40px; align-items: stretch;
+}
+
+.why-card {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border-lit);
+    border-top: 3px solid var(--amber);
+    padding: 48px 48px 48px 48px;
+    display: flex; flex-direction: column;
+    position: relative;
+}
+
+.why-card-num {
+    font-family: var(--mono); font-size: 72px; font-weight: 700;
+    color: var(--amber-faint); line-height: 1; margin-bottom: 24px;
+    /* Use a darker amber so it's decorative but present */
+    color: rgba(245,158,11,0.18);
+    position: absolute; top: 32px; right: 40px;
+    font-size: 96px;
+    user-select: none;
+}
+
+.why-card-icon {
+    font-family: var(--mono); font-size: 28px; color: var(--amber);
+    margin-bottom: 20px; display: block;
+}
+
+.why-card-title {
+    font-family: var(--mono); font-size: 36px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.01em; line-height: 1.15;
+    margin-bottom: 24px;
+}
+
+.why-card-body {
+    font-family: var(--sans); font-size: 24px; font-weight: 300;
+    color: var(--text-secondary); line-height: 1.65; flex: 1;
+}
+
+.why-card-body strong {
+    color: var(--text-primary); font-weight: 500;
+}
+
+/* ===========================================
+   SLIDE 3 — DESIGN DIAGRAM
+   =========================================== */
+.slide-diagram .s-body {
+    display: flex; flex-direction: column;
+    padding: 64px 100px 56px 100px;
+}
+
+.diagram-section-label { margin-bottom: 18px; }
+
+.diagram-title {
+    font-family: var(--mono); font-size: 64px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.02em; line-height: 1;
+    margin-bottom: 60px;
+}
+.diagram-title .amber { color: var(--amber); }
+
+/* Main flow row */
+.diagram-flow {
+    display: flex; align-items: center; gap: 0;
+    margin-bottom: 48px; flex: 0 0 auto;
+}
+
+.diag-box {
+    background: var(--surface);
+    border: 1px solid var(--border-lit);
+    padding: 28px 32px;
+    flex: 1;
+    min-width: 0;
+    position: relative;
+}
+
+.diag-box.primary { border-color: var(--amber-border); border-top: 2px solid var(--amber); }
+.diag-box.secondary { border-color: var(--teal-border); border-top: 2px solid var(--teal); }
+
+.diag-box-tag {
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 10px; display: block;
+}
+.diag-box.primary .diag-box-tag { color: var(--amber); }
+.diag-box.secondary .diag-box-tag { color: var(--teal); }
+.diag-box-name {
+    font-family: var(--mono); font-size: 26px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.01em;
+    margin-bottom: 8px; display: block;
+}
+.diag-box-desc {
+    font-family: var(--sans); font-size: 18px; font-weight: 300;
+    color: var(--text-secondary); line-height: 1.5;
+}
+
+/* Arrow between boxes */
+.diag-arrow {
+    flex: 0 0 64px;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+}
+.diag-arrow::before {
+    content: '';
+    display: block; height: 2px; width: 32px;
+    background: var(--border-lit);
+}
+.diag-arrow::after {
+    content: '';
+    display: block;
+    border-top: 7px solid transparent;
+    border-bottom: 7px solid transparent;
+    border-left: 10px solid var(--border-lit);
+    position: absolute; right: 8px;
+}
+
+/* launchd callout — appears under box 2 */
+.diag-launchd-wrap {
+    position: relative; flex: 0 0 auto;
+}
+.diag-launchd-badge {
+    position: absolute;
+    top: 100%; left: 50%; transform: translateX(-50%);
+    margin-top: 16px;
+    background: var(--surface-2);
+    border: 1px solid var(--teal-border);
+    padding: 10px 20px;
+    font-family: var(--mono); font-size: 16px; font-weight: 600;
+    color: var(--teal); letter-spacing: 0.1em; white-space: nowrap;
+    display: flex; align-items: center; gap: 10px;
+}
+.diag-launchd-badge::before {
+    content: '';
+    position: absolute;
+    bottom: 100%; left: 50%; transform: translateX(-50%);
+    width: 1px; height: 16px;
+    background: var(--teal-border);
+}
+.launchd-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--teal); box-shadow: 0 0 5px var(--teal);
+    animation: pulse 1.8s ease-in-out infinite;
+}
+
+/* Context pills row */
+.diagram-context {
+    display: flex; gap: 24px; margin-top: 88px;
+}
+
+.ctx-pill {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 18px 28px;
+    display: flex; flex-direction: column; gap: 4px;
+    flex: 1;
+}
+.ctx-pill-name {
+    font-family: var(--mono); font-size: 18px; font-weight: 600;
+    color: var(--text-primary); letter-spacing: 0.02em;
+}
+.ctx-pill-desc {
+    font-family: var(--sans); font-size: 16px; font-weight: 300;
+    color: var(--text-dim);
+}
+
+/* ===========================================
+   SLIDE 4 — TASK LIFECYCLE FLOW
+   =========================================== */
+.slide-flow .s-body {
+    display: flex; flex-direction: column;
+    padding: 56px 100px 52px 100px;
+}
+
+/* Timeline track — 4 phase nodes connected by a line */
+.tl-track {
+    display: flex;
+    align-items: flex-start;
+    position: relative;
+    margin-bottom: 44px;
+}
+
+/* Horizontal connector behind the nodes */
+.tl-track::before {
+    content: '';
+    position: absolute;
+    top: 23px; left: 12%; right: 12%;
+    height: 2px;
+    background: linear-gradient(90deg, var(--amber) 0%, rgba(245,158,11,0.25) 100%);
+    z-index: 0;
+}
+
+.tl-col {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; gap: 14px; z-index: 1;
+}
+
+.tl-node {
+    width: 48px; height: 48px;
+    background: var(--amber); color: #000;
+    font-family: var(--mono); font-size: 17px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    letter-spacing: 0.05em; flex-shrink: 0;
+}
+
+.tl-node.dim {
+    background: var(--surface-2); color: var(--text-dim);
+    border: 1px solid var(--border-lit);
+}
+
+.tl-phase-name {
+    font-family: var(--mono); font-size: 14px; font-weight: 700;
+    color: var(--amber); letter-spacing: 0.25em; text-transform: uppercase;
+    text-align: center;
+}
+
+.tl-phase-name.dim { color: var(--text-dim); }
+
+/* Phase cards row */
+.tl-cards {
+    display: flex; gap: 20px; flex: 0 0 auto;
+}
+
+.tl-card {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border-lit);
+    border-top: 2px solid var(--amber);
+    padding: 28px 28px 24px;
+}
+.tl-card.dim { border-top-color: var(--border-lit); }
+
+.tl-card-actor {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    color: var(--teal); letter-spacing: 0.28em; text-transform: uppercase;
+    margin-bottom: 18px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.tl-card.dim .tl-card-actor { color: var(--text-dim); }
+
+.tl-events { display: flex; flex-direction: column; gap: 11px; }
+
+.tl-ev {
+    font-family: var(--sans); font-size: 21px; font-weight: 400;
+    color: var(--text-primary); line-height: 1.4;
+    display: flex; align-items: flex-start; gap: 10px;
+}
+.tl-ev::before {
+    content: '→'; font-family: var(--mono); color: var(--amber);
+    flex-shrink: 0; font-size: 18px; margin-top: 2px;
+}
+.tl-card.dim .tl-ev::before { color: var(--text-dim); }
+.tl-card.dim .tl-ev { color: var(--text-secondary); }
+
+.tl-ev code {
+    font-family: var(--mono); font-size: 18px; font-weight: 500;
+    color: var(--amber); background: var(--amber-faint); padding: 0 5px;
+}
+.tl-card.dim .tl-ev code { color: var(--text-dim); background: var(--surface-2); }
+
+/* State machine bar at the bottom */
+.tl-states {
+    display: flex; align-items: center; gap: 0;
+    margin-top: 36px;
+}
+
+.tl-state {
+    background: var(--surface-2); border: 1px solid var(--border-lit);
+    padding: 14px 24px;
+    font-family: var(--mono); font-size: 18px; font-weight: 600;
+    color: var(--text-dim); letter-spacing: 0.06em;
+    display: flex; align-items: center; gap: 10px;
+}
+.tl-state.active-state { color: var(--amber); border-color: var(--amber-border); background: var(--amber-faint); }
+.tl-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: pulse 2s ease-in-out infinite; }
+
+.tl-arrow {
+    font-family: var(--mono); font-size: 18px; color: var(--border-lit);
+    padding: 0 12px; user-select: none;
+}
+
+.tl-states-label {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    color: var(--text-dim); letter-spacing: 0.25em; text-transform: uppercase;
+    margin-right: 24px; white-space: nowrap;
+}
+
+/* ===========================================
+   SLIDE 6 — WIKI AS LLM MEMORY
+   =========================================== */
+.slide-memory .s-body {
+    display: flex; flex-direction: column;
+    padding: 52px 100px 48px 100px;
+}
+
+.mem-layout {
+    flex: 1; display: flex; gap: 28px; align-items: stretch;
+}
+
+/* Primary card — Obsidian Wiki */
+.mem-primary {
+    flex: 0 0 620px;
+    background: var(--surface);
+    border: 1px solid var(--amber-border);
+    border-top: 3px solid var(--amber);
+    padding: 44px 44px;
+    display: flex; flex-direction: column;
+    position: relative;
+}
+
+.mem-primary-badge {
+    position: absolute; top: -1px; right: 36px;
+    background: var(--amber); color: #000;
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.25em; text-transform: uppercase;
+    padding: 4px 14px;
+}
+
+.mem-primary-icon {
+    font-size: 32px; margin-bottom: 20px; display: block;
+}
+
+.mem-primary-name {
+    font-family: var(--mono); font-size: 36px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.01em;
+    margin-bottom: 6px; display: block;
+}
+
+.mem-primary-tagline {
+    font-family: var(--sans); font-size: 19px; font-weight: 300; font-style: italic;
+    color: var(--text-dim); margin-bottom: 32px;
+}
+
+.mem-primary-stat {
+    display: flex; gap: 24px; margin-bottom: 28px;
+}
+
+.mem-stat-chip {
+    background: var(--amber-faint); border: 1px solid var(--amber-border);
+    padding: 8px 16px;
+    font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--amber);
+}
+
+.mem-primary-body {
+    font-family: var(--sans); font-size: 21px; font-weight: 300;
+    color: var(--text-secondary); line-height: 1.6; flex: 1;
+    margin-bottom: 28px;
+}
+.mem-primary-body strong { color: var(--text-primary); font-weight: 500; }
+.mem-primary-body code {
+    font-family: var(--mono); font-size: 18px;
+    color: var(--amber); background: var(--amber-faint); padding: 0 5px;
+}
+
+.mem-skills-row {
+    display: flex; gap: 10px; flex-wrap: wrap;
+}
+.mem-skill-tag {
+    font-family: var(--mono); font-size: 14px; font-weight: 500;
+    color: var(--teal); background: var(--teal-faint);
+    border: 1px solid var(--teal-border);
+    padding: 5px 12px; letter-spacing: 0.06em;
+}
+
+/* Secondary cards column — right side */
+.mem-secondary-col {
+    flex: 1; display: flex; flex-direction: column; gap: 16px;
+}
+
+.mem-card {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border-lit);
+    border-left: 3px solid var(--border-lit);
+    padding: 20px 24px;
+    display: flex; flex-direction: column; gap: 6px;
+}
+.mem-card.hl { border-left-color: var(--amber); }
+.mem-card.hl2 { border-left-color: var(--teal); }
+
+.mem-card-row {
+    display: flex; align-items: baseline; gap: 12px;
+}
+.mem-card-name {
+    font-family: var(--mono); font-size: 20px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: 0.01em;
+}
+.mem-card-path {
+    font-family: var(--mono); font-size: 14px; font-weight: 400;
+    color: var(--text-dim); letter-spacing: 0.03em;
+}
+.mem-card-body {
+    font-family: var(--sans); font-size: 18px; font-weight: 300;
+    color: var(--text-secondary); line-height: 1.5;
+}
+.mem-card-body code {
+    font-family: var(--mono); font-size: 16px;
+    color: var(--amber); background: var(--amber-faint); padding: 0 4px;
+}
+.mem-card-body strong { color: var(--text-primary); font-weight: 500; }
+
+/* ===========================================
+   SLIDE 5 — HOW TO HARNESS
+   =========================================== */
+.slide-harness .s-body {
+    display: flex; align-items: stretch;
+}
+
+.harness-left {
+    flex: 1; display: flex; flex-direction: column;
+    padding: 64px 80px 64px 100px;
+    border-right: 1px solid var(--border-lit);
+}
+
+.harness-section-label { margin-bottom: 18px; }
+
+.harness-title {
+    font-family: var(--mono); font-size: 64px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.02em; line-height: 1.05;
+    margin-bottom: 52px;
+}
+.harness-title .amber { color: var(--amber); }
+
+/* Steps */
+.harness-steps { display: flex; flex-direction: column; gap: 20px; }
+
+.h-step {
+    display: flex; align-items: flex-start; gap: 24px;
+}
+.h-step-num {
+    flex-shrink: 0;
+    width: 40px; height: 40px;
+    background: var(--amber-faint); border: 1px solid var(--amber-border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 17px; font-weight: 700;
+    color: var(--amber); margin-top: 2px;
+}
+.h-step-content { flex: 1; }
+.h-step-title {
+    font-family: var(--mono); font-size: 24px; font-weight: 600;
+    color: var(--text-primary); letter-spacing: 0.01em; margin-bottom: 4px;
+    display: block;
+}
+.h-step-desc {
+    font-family: var(--sans); font-size: 21px; font-weight: 300;
+    color: var(--text-secondary); line-height: 1.5;
+}
+.h-step-desc code {
+    font-family: var(--mono); font-size: 19px; font-weight: 500;
+    color: var(--amber); background: var(--amber-faint);
+    padding: 1px 6px;
+}
+
+/* Right panel — task file example */
+.harness-right {
+    width: 680px; flex-shrink: 0;
+    display: flex; flex-direction: column;
+    padding: 64px 80px 64px 60px;
+}
+
+.code-panel-label {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    color: var(--teal); letter-spacing: 0.28em; text-transform: uppercase;
+    margin-bottom: 24px; display: flex; align-items: center; gap: 12px;
+}
+.code-panel-label::before {
+    content: ''; display: inline-block; width: 20px; height: 2px; background: var(--teal);
+}
+
+.code-file-header {
+    background: var(--surface-2);
+    border: 1px solid var(--border-lit);
+    border-bottom: none;
+    padding: 14px 24px;
+    font-family: var(--mono); font-size: 16px; font-weight: 500;
+    color: var(--text-dim); letter-spacing: 0.04em;
+    display: flex; align-items: center; gap: 10px;
+}
+.code-file-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+
+.code-block {
+    background: var(--surface);
+    border: 1px solid var(--border-lit);
+    border-top: 2px solid var(--amber);
+    padding: 32px 32px;
+    font-family: var(--mono); font-size: 20px; font-weight: 400;
+    line-height: 1.75;
+    color: var(--text-primary);
+    flex: 1;
+    white-space: pre;
+    margin-bottom: 32px;
+}
+.code-block .c-comment { color: var(--text-dim); }
+.code-block .c-key { color: var(--amber); }
+.code-block .c-val { color: var(--teal); }
+.code-block .c-str { color: #86EFAC; }
+.code-block .c-dashes { color: var(--text-dim); }
+
+/* Mode chips */
+.mode-row { display: flex; gap: 16px; }
+.mode-chip {
+    flex: 1;
+    background: var(--surface-2); border: 1px solid var(--border-lit);
+    padding: 16px 20px; display: flex; flex-direction: column; gap: 4px;
+}
+.mode-chip-name {
+    font-family: var(--mono); font-size: 18px; font-weight: 700;
+    color: var(--amber);
+}
+.mode-chip.gated .mode-chip-name { color: var(--red); }
+.mode-chip-desc {
+    font-family: var(--sans); font-size: 15px; font-weight: 300;
+    color: var(--text-secondary);
+}
+
+/* ===========================================
+   SLIDE — IN PLAIN ENGLISH (analogy)
+   =========================================== */
+.slide-plain .s-body {
+    display: flex; flex-direction: column;
+    padding: 52px 100px 48px 100px;
+}
+.plain-title {
+    font-family: var(--mono); font-size: 60px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.02em; line-height: 1;
+    margin-bottom: 16px;
+}
+.plain-title .amber { color: var(--amber); }
+.plain-intro {
+    font-family: var(--sans); font-size: 23px; font-weight: 300; font-style: italic;
+    color: var(--text-secondary); line-height: 1.5; margin-bottom: 40px; max-width: 1180px;
+}
+.plain-cols { flex: 1; display: flex; gap: 36px; align-items: stretch; }
+.plain-col {
+    flex: 1; background: var(--surface);
+    border: 1px solid var(--border-lit);
+    padding: 34px 40px; display: flex; flex-direction: column;
+}
+.plain-col.analogy { border-top: 3px solid var(--teal); }
+.plain-col.system { border-top: 3px solid var(--amber); }
+.plain-col-label {
+    font-family: var(--mono); font-size: 13px; font-weight: 700;
+    letter-spacing: 0.26em; text-transform: uppercase;
+    margin-bottom: 26px; padding-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.plain-col.analogy .plain-col-label { color: var(--teal); }
+.plain-col.system .plain-col-label { color: var(--amber); }
+.plain-row {
+    display: flex; align-items: flex-start; gap: 20px; margin-bottom: 20px;
+}
+.plain-row:last-child { margin-bottom: 0; }
+.plain-ico {
+    width: 46px; height: 46px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    background: var(--surface-2); border: 1px solid var(--border-lit);
+}
+.plain-col.analogy .plain-ico { border-color: var(--teal-border); }
+.plain-col.system .plain-ico { border-color: var(--amber-border); }
+.plain-rt { padding-top: 1px; }
+.plain-rt-main {
+    font-family: var(--sans); font-size: 22px; font-weight: 500;
+    color: var(--text-primary); line-height: 1.35; display: block; margin-bottom: 3px;
+}
+.plain-rt-sub {
+    font-family: var(--sans); font-size: 17px; font-weight: 300;
+    color: var(--text-dim); line-height: 1.4; display: block;
+}
+.plain-rt-main code, .plain-rt-sub code {
+    font-family: var(--mono); font-size: 18px; color: var(--amber);
+    background: var(--amber-faint); padding: 0 5px;
+}
+.plain-footnote {
+    margin-top: 28px;
+    font-family: var(--mono); font-size: 18px; color: var(--teal);
+    letter-spacing: 0.03em; text-align: center;
+    background: var(--teal-faint); border: 1px solid var(--teal-border);
+    padding: 15px;
+}
+.plain-footnote strong { color: var(--text-primary); font-weight: 600; }
+
+/* ===========================================
+   SLIDE — GLOSSARY / KEY TERMS
+   =========================================== */
+.slide-glossary .s-body {
+    display: flex; flex-direction: column;
+    padding: 52px 100px 48px 100px;
+}
+.gloss-title {
+    font-family: var(--mono); font-size: 60px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.02em; line-height: 1;
+    margin-bottom: 14px;
+}
+.gloss-title .amber { color: var(--amber); }
+.gloss-intro {
+    font-family: var(--sans); font-size: 22px; font-weight: 300; font-style: italic;
+    color: var(--text-secondary); margin-bottom: 36px;
+}
+.gloss-grid {
+    flex: 1;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px 36px;
+    align-content: start;
+}
+.gloss-item {
+    background: var(--surface); border: 1px solid var(--border-lit);
+    border-left: 3px solid var(--amber);
+    padding: 20px 28px;
+    display: flex; flex-direction: column; gap: 6px;
+}
+.gloss-item.teal { border-left-color: var(--teal); }
+.gloss-term {
+    font-family: var(--mono); font-size: 21px; font-weight: 700;
+    color: var(--amber); letter-spacing: 0.01em;
+}
+.gloss-item.teal .gloss-term { color: var(--teal); }
+.gloss-def {
+    font-family: var(--sans); font-size: 18px; font-weight: 300;
+    color: var(--text-secondary); line-height: 1.45;
+}
+.gloss-def strong { color: var(--text-primary); font-weight: 500; }
+.gloss-def code {
+    font-family: var(--mono); font-size: 16px; color: var(--amber);
+    background: var(--amber-faint); padding: 0 4px;
+}
+
+/* ===========================================
+   INLINE EDIT CONTROLS
+   Hover top-left corner or press E to toggle
+   =========================================== */
+.edit-hotzone {
+    position: fixed; top: 0; left: 0;
+    width: 80px; height: 80px;
+    z-index: 10000; cursor: pointer;
+}
+.edit-toggle {
+    position: fixed; top: 12px; left: 12px;
+    background: var(--surface); border: 1px solid var(--amber-border);
+    color: var(--amber); font-size: 16px;
+    padding: 6px 12px; cursor: pointer;
+    font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease;
+    z-index: 10001;
+}
+.edit-toggle.show, .edit-toggle.active {
+    opacity: 1; pointer-events: auto;
+}
+.edit-toggle.active {
+    background: var(--amber); color: #000;
+    border-color: var(--amber);
+}
+[contenteditable="true"] {
+    outline: 1px dashed rgba(245,158,11,0.5);
+    outline-offset: 2px;
+    cursor: text;
+}
+</style>
+</head>
+<body>
+
+<!-- Inline edit controls -->
+<div class="edit-hotzone"></div>
+<button class="edit-toggle" id="editToggle" title="Edit mode (E)">✏ EDIT</button>
+
+<div class="deck-viewport">
+<main class="deck-stage" id="deckStage">
+
+  <!-- ============================================================
+       SLIDE 1 — TITLE
+       ============================================================ -->
+  <section class="slide slide-title active" aria-label="Title slide">
+
+    <div class="s-header">
+      <div class="s-header-brand">
+        <div class="s-header-logo">Orchestrate</div>
+        <div class="s-header-sep"></div>
+        <div class="s-header-crumb">ai-console / .orchestrate / <span class="hl">inbox</span></div>
+      </div>
+      <div class="s-header-meta">
+        <div class="status-chip"><div class="status-dot"></div>Running</div>
+        <div class="s-header-date">Jun 2026</div>
+      </div>
+    </div>
+
+    <div class="s-left-accent"></div>
+
+    <div class="s-body">
+      <div class="title-main-col">
+        <div class="title-eyebrow reveal d1">Internal Tooling · ai-console</div>
+        <h1 class="title-h1 reveal d2">Inbox &amp;<br><span class="amber">Orchestrate</span></h1>
+        <p class="title-sub reveal d3">Autonomous background jobs, async execution,<br>and recurring tasks via launchd</p>
+        <div class="title-tags reveal d4">
+          <div class="ttag" data-n="01">Autonomous Harness</div>
+          <div class="ttag" data-n="02">Async Execution</div>
+          <div class="ttag" data-n="03">launchd Scheduler</div>
+        </div>
+      </div>
+
+      <div class="title-flow-col reveal-right d2">
+        <div class="flow-panel-heading">System / Flow</div>
+        <div class="flow-step">
+          <div class="flow-icon">⌁</div>
+          <div class="flow-text">
+            <span class="flow-name">inbox/ Drop-Zone</span>
+            <span class="flow-desc">a folder you drop tasks in</span>
+          </div>
+        </div>
+        <div class="flow-conn"></div>
+        <div class="flow-step">
+          <div class="flow-icon">◈</div>
+          <div class="flow-text">
+            <span class="flow-name">Harness Executor</span>
+            <span class="flow-desc">the AI runs it on its own</span>
+          </div>
+        </div>
+        <div class="flow-conn"></div>
+        <div class="flow-step">
+          <div class="flow-icon">⏱</div>
+          <div class="flow-text">
+            <span class="flow-name">launchd Heartbeat</span>
+            <span class="flow-desc">macOS scheduler · every 60s</span>
+          </div>
+        </div>
+        <div class="flow-conn"></div>
+        <div class="flow-step">
+          <div class="flow-icon">✓</div>
+          <div class="flow-text">
+            <span class="flow-name">Registry &amp; Archive</span>
+            <span class="flow-desc">task state + history</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="s-footer">
+      <div class="s-footer-left">
+        <span>haimeng.zhou</span>
+        <span class="hl">orchestrate · auto mode</span>
+      </div>
+      <div class="s-footer-counter">01 / 08</div>
+    </div>
+
+  </section>
+
+  <!-- ============================================================
+       SLIDE 2 — IN PLAIN ENGLISH (analogy for newcomers)
+       ============================================================ -->
+  <section class="slide slide-plain" aria-label="In plain English">
+
+    <div class="s-header">
+      <div class="s-header-brand">
+        <div class="s-header-logo">Orchestrate</div>
+        <div class="s-header-sep"></div>
+        <div class="s-header-crumb">ai-console / <span class="hl">in plain english</span></div>
+      </div>
+      <div class="s-header-meta">
+        <div class="status-chip"><div class="status-dot"></div>Running</div>
+        <div class="s-header-date">Jun 2026</div>
+      </div>
+    </div>
+
+    <div class="s-left-accent"></div>
+
+    <div class="s-body">
+
+      <div class="section-label reveal d1">00 / The Idea</div>
+      <h2 class="plain-title reveal d2">Think of it like a <span class="amber">kitchen</span></h2>
+      <p class="plain-intro reveal d2">
+        You don't need to know the internals. This whole system is just a way to hand off a
+        task and walk away — the same way you'd clip an order ticket to the rail in a restaurant
+        and let the kitchen take it from there.
+      </p>
+
+      <div class="plain-cols">
+
+        <!-- LEFT: the everyday analogy -->
+        <div class="plain-col analogy reveal d3">
+          <div class="plain-col-label">The Analogy · A Restaurant Kitchen</div>
+
+          <div class="plain-row">
+            <div class="plain-ico">📝</div>
+            <div class="plain-rt">
+              <span class="plain-rt-main">You write an order ticket</span>
+              <span class="plain-rt-sub">"Make me a fix for the rate-limit bug."</span>
+            </div>
+          </div>
+          <div class="plain-row">
+            <div class="plain-ico">📌</div>
+            <div class="plain-rt">
+              <span class="plain-rt-main">Clip it to the rail and leave</span>
+              <span class="plain-rt-sub">No standing around waiting by the kitchen.</span>
+            </div>
+          </div>
+          <div class="plain-row">
+            <div class="plain-ico">👨‍🍳</div>
+            <div class="plain-rt">
+              <span class="plain-rt-main">A cook grabs the next ticket</span>
+              <span class="plain-rt-sub">Works it from start to finish, on their own.</span>
+            </div>
+          </div>
+          <div class="plain-row">
+            <div class="plain-ico">🔔</div>
+            <div class="plain-rt">
+              <span class="plain-rt-main">The dish comes out, logged</span>
+              <span class="plain-rt-sub">You review it whenever you're back.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: what's really happening -->
+        <div class="plain-col system reveal d4">
+          <div class="plain-col-label">What's Actually Happening</div>
+
+          <div class="plain-row">
+            <div class="plain-ico">⌁</div>
+            <div class="plain-rt">
+              <span class="plain-rt-main">You write a task file</span>
+              <span class="plain-rt-sub">A plain text note describing what you want.</span>
+            </div>
+          </div>
+          <div class="plain-row">
+            <div class="plain-ico">📂</div>
+            <div class="plain-rt">
+              <span class="plain-rt-main">Drop it in the <code>inbox/</code> folder</span>
+              <span class="plain-rt-sub">A watched folder on your laptop.</span>
+            </div>
+          </div>
+          <div class="plain-row">
+            <div class="plain-ico">◈</div>
+            <div class="plain-rt">
+              <span class="plain-rt-main">Claude picks it up and works</span>
+              <span class="plain-rt-sub">The AI runs the whole task by itself.</span>
+            </div>
+          </div>
+          <div class="plain-row">
+            <div class="plain-ico">✓</div>
+            <div class="plain-rt">
+              <span class="plain-rt-main">The result is saved to history</span>
+              <span class="plain-rt-sub">With a full log of what it did.</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="plain-footnote reveal d5">
+        No servers, no dashboards, no cloud — <strong>just text files and your own laptop.</strong>
+      </div>
+
+    </div>
+
+    <div class="s-footer">
+      <div class="s-footer-left">
+        <span>haimeng.zhou</span>
+        <span class="hl">orchestrate · the idea</span>
+      </div>
+      <div class="s-footer-counter">02 / 08</div>
+    </div>
+
+  </section>
+
+  <!-- ============================================================
+       SLIDE 3 — WHY WE BUILT THIS
+       ============================================================ -->
+  <section class="slide slide-why" aria-label="Why we built this">
+
+    <div class="s-header">
+      <div class="s-header-brand">
+        <div class="s-header-logo">Orchestrate</div>
+        <div class="s-header-sep"></div>
+        <div class="s-header-crumb">ai-console / <span class="hl">motivation</span></div>
+      </div>
+      <div class="s-header-meta">
+        <div class="status-chip"><div class="status-dot"></div>Running</div>
+        <div class="s-header-date">Jun 2026</div>
+      </div>
+    </div>
+
+    <div class="s-left-accent"></div>
+
+    <div class="s-body">
+      <div class="slide-why" style="position:absolute;inset:0;">
+        <div class="s-body" style="flex-direction:column;padding:64px 100px 56px 100px;">
+
+          <div class="section-label reveal d1">01 / Why We Built This</div>
+          <h2 class="why-title reveal d2">Three reasons we<br>built this <span class="amber">flow</span></h2>
+
+          <div class="why-cards">
+
+            <div class="why-card reveal d3">
+              <div class="why-card-num">01</div>
+              <span class="why-card-icon">◈</span>
+              <div class="why-card-title">Autonomous<br>with Harness</div>
+              <p class="why-card-body">
+                Claude Code's harness executes entire tasks <strong>without human supervision</strong>.
+                The inbox acts as a fire-and-forget dispatch layer — drop a task file and walk away.
+              </p>
+            </div>
+
+            <div class="why-card reveal d4">
+              <div class="why-card-num">02</div>
+              <span class="why-card-icon">⚡</span>
+              <div class="why-card-title">Async<br>Execution</div>
+              <p class="why-card-body">
+                Jobs run <strong>in the background</strong> while you work on something else.
+                The orchestrate skill maintains phases, a task registry, and a full archive — no babysitting needed.
+              </p>
+            </div>
+
+            <div class="why-card reveal d5">
+              <div class="why-card-num">03</div>
+              <span class="why-card-icon">⏱</span>
+              <div class="why-card-title">launchd for<br>Repeated Jobs</div>
+              <p class="why-card-body">
+                macOS launchd provides <strong>OS-level reliability</strong> for recurring work:
+                daily wiki ingests, log analysis, heartbeat checks. Jobs survive reboots and run on schedule.
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="s-footer">
+      <div class="s-footer-left">
+        <span>haimeng.zhou</span>
+        <span class="hl">orchestrate · motivation</span>
+      </div>
+      <div class="s-footer-counter">03 / 08</div>
+    </div>
+
+  </section>
+
+  <!-- ============================================================
+       SLIDE 3 — DESIGN DIAGRAM
+       ============================================================ -->
+  <section class="slide slide-diagram" aria-label="Design diagram">
+
+    <div class="s-header">
+      <div class="s-header-brand">
+        <div class="s-header-logo">Orchestrate</div>
+        <div class="s-header-sep"></div>
+        <div class="s-header-crumb">ai-console / <span class="hl">architecture</span></div>
+      </div>
+      <div class="s-header-meta">
+        <div class="status-chip"><div class="status-dot"></div>Running</div>
+        <div class="s-header-date">Jun 2026</div>
+      </div>
+    </div>
+
+    <div class="s-left-accent"></div>
+
+    <div class="s-body" style="flex-direction:column;padding:60px 100px 56px 100px;">
+
+      <div class="section-label reveal d1 diagram-section-label">02 / System Architecture</div>
+      <h2 class="diagram-title reveal d2">How it <span class="amber">flows</span></h2>
+
+      <!-- Main flow row -->
+      <div class="diagram-flow reveal d3">
+
+        <!-- Box 1: Inbox -->
+        <div class="diag-box primary">
+          <span class="diag-box-tag">Entry</span>
+          <span class="diag-box-name">inbox/</span>
+          <span class="diag-box-desc">Drop-zone for<br>async job files</span>
+        </div>
+
+        <div class="diag-arrow"></div>
+
+        <!-- Box 2: drain-inbox.sh + launchd -->
+        <div class="diag-launchd-wrap" style="flex:1;">
+          <div class="diag-box primary">
+            <span class="diag-box-tag">Scheduler</span>
+            <span class="diag-box-name">drain-inbox.sh</span>
+            <span class="diag-box-desc">Picks up tasks,<br>creates registry entries</span>
+          </div>
+          <div class="diag-launchd-badge">
+            <div class="launchd-dot"></div>
+            launchd · every 60s
+          </div>
+        </div>
+
+        <div class="diag-arrow"></div>
+
+        <!-- Box 3: Orchestrate skill -->
+        <div class="diag-box primary" style="flex:1.3;">
+          <span class="diag-box-tag">Executor</span>
+          <span class="diag-box-name">orchestrate skill</span>
+          <span class="diag-box-desc">Harness runs task phases<br>autonomously via Claude Code</span>
+        </div>
+
+        <div class="diag-arrow"></div>
+
+        <!-- Box 4: Archive -->
+        <div class="diag-box secondary">
+          <span class="diag-box-tag">Output</span>
+          <span class="diag-box-name">orchestrate-history/</span>
+          <span class="diag-box-desc">Completed tasks<br>archived with full log</span>
+        </div>
+
+      </div>
+
+      <!-- Context pills -->
+      <div class="diagram-context reveal d4">
+        <div class="ctx-pill">
+          <span class="ctx-pill-name">.orchestrate/tasks/</span>
+          <span class="ctx-pill-desc">Task registry — state machine: pending → in_progress → completed</span>
+        </div>
+        <div class="ctx-pill">
+          <span class="ctx-pill-name">mode: gated</span>
+          <span class="ctx-pill-desc">Human approval gate before destructive operations</span>
+        </div>
+        <div class="ctx-pill">
+          <span class="ctx-pill-name">rescue.sh</span>
+          <span class="ctx-pill-desc">Rescues stuck or failed tasks from in_progress state</span>
+        </div>
+        <div class="ctx-pill">
+          <span class="ctx-pill-name">project.md</span>
+          <span class="ctx-pill-desc">Shared context across all tasks — goals, constraints, lessons</span>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="s-footer">
+      <div class="s-footer-left">
+        <span>haimeng.zhou</span>
+        <span class="hl">orchestrate · architecture</span>
+      </div>
+      <div class="s-footer-counter">04 / 08</div>
+    </div>
+
+  </section>
+
+  <!-- ============================================================
+       SLIDE 4 — TASK LIFECYCLE FLOW
+       ============================================================ -->
+  <section class="slide slide-flow" aria-label="Task lifecycle flow">
+
+    <div class="s-header">
+      <div class="s-header-brand">
+        <div class="s-header-logo">Orchestrate</div>
+        <div class="s-header-sep"></div>
+        <div class="s-header-crumb">ai-console / <span class="hl">task lifecycle</span></div>
+      </div>
+      <div class="s-header-meta">
+        <div class="status-chip"><div class="status-dot"></div>Running</div>
+        <div class="s-header-date">Jun 2026</div>
+      </div>
+    </div>
+
+    <div class="s-left-accent"></div>
+
+    <div class="s-body" style="flex-direction:column;padding:56px 100px 52px 100px;">
+
+      <div class="section-label reveal d1">04 / Task Lifecycle</div>
+      <h2 class="diagram-title reveal d2" style="font-size:60px;margin-bottom:48px;">
+        A job from <span class="amber">drop to archive</span>
+      </h2>
+
+      <!-- Timeline nodes -->
+      <div class="tl-track reveal d3">
+        <div class="tl-col">
+          <div class="tl-node">01</div>
+          <div class="tl-phase-name">Dispatch</div>
+        </div>
+        <div class="tl-col">
+          <div class="tl-node">02</div>
+          <div class="tl-phase-name">Pickup</div>
+        </div>
+        <div class="tl-col">
+          <div class="tl-node">03</div>
+          <div class="tl-phase-name">Execute</div>
+        </div>
+        <div class="tl-col">
+          <div class="tl-node dim">04</div>
+          <div class="tl-phase-name dim">Complete</div>
+        </div>
+      </div>
+
+      <!-- Phase cards -->
+      <div class="tl-cards reveal d4">
+
+        <div class="tl-card">
+          <div class="tl-card-actor">User / Agent</div>
+          <div class="tl-events">
+            <div class="tl-ev">Write <code>.md</code> task file with <code>task:</code> &amp; <code>mode:</code></div>
+            <div class="tl-ev">Drop into <code>inbox/</code></div>
+            <div class="tl-ev">Walk away — fire and forget</div>
+          </div>
+        </div>
+
+        <div class="tl-card">
+          <div class="tl-card-actor">launchd · drain-inbox.sh</div>
+          <div class="tl-events">
+            <div class="tl-ev">launchd fires every <code>60s</code></div>
+            <div class="tl-ev"><code>drain-inbox.sh</code> scans inbox/</div>
+            <div class="tl-ev">Task registered in <code>.orchestrate/tasks/</code></div>
+            <div class="tl-ev">File removed from inbox</div>
+          </div>
+        </div>
+
+        <div class="tl-card">
+          <div class="tl-card-actor">Harness · orchestrate skill</div>
+          <div class="tl-events">
+            <div class="tl-ev">Tend loop picks up <code>pending</code> task</div>
+            <div class="tl-ev">Harness runs <code>orchestrate skill</code></div>
+            <div class="tl-ev">Phases: Research → Strategy → Execute → QA</div>
+            <div class="tl-ev">Registry updated each phase</div>
+          </div>
+        </div>
+
+        <div class="tl-card dim">
+          <div class="tl-card-actor">Archive · registry</div>
+          <div class="tl-events">
+            <div class="tl-ev">All phases passed</div>
+            <div class="tl-ev">Archived to <code>orchestrate-history/</code></div>
+            <div class="tl-ev">Registry entry → <code>completed</code></div>
+            <div class="tl-ev">Wiki ingest if applicable</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- State machine row -->
+      <div class="tl-states reveal d5">
+        <div class="tl-states-label">Task state:</div>
+        <div class="tl-state active-state"><div class="tl-state-dot"></div>pending</div>
+        <div class="tl-arrow">──►</div>
+        <div class="tl-state active-state"><div class="tl-state-dot"></div>in_progress</div>
+        <div class="tl-arrow">──►</div>
+        <div class="tl-state">completed</div>
+        <div class="tl-arrow">──►</div>
+        <div class="tl-state">archived</div>
+      </div>
+
+    </div>
+
+    <div class="s-footer">
+      <div class="s-footer-left">
+        <span>haimeng.zhou</span>
+        <span class="hl">orchestrate · lifecycle</span>
+      </div>
+      <div class="s-footer-counter">05 / 08</div>
+    </div>
+
+  </section>
+
+  <!-- ============================================================
+       SLIDE 5 — HOW TO HARNESS
+       ============================================================ -->
+  <section class="slide slide-harness" aria-label="How to harness">
+
+    <div class="s-header">
+      <div class="s-header-brand">
+        <div class="s-header-logo">Orchestrate</div>
+        <div class="s-header-sep"></div>
+        <div class="s-header-crumb">ai-console / <span class="hl">how to harness</span></div>
+      </div>
+      <div class="s-header-meta">
+        <div class="status-chip"><div class="status-dot"></div>Running</div>
+        <div class="s-header-date">Jun 2026</div>
+      </div>
+    </div>
+
+    <div class="s-left-accent"></div>
+
+    <div class="s-body">
+
+      <!-- Left: steps -->
+      <div class="harness-left">
+        <div class="section-label reveal d1 harness-section-label">03 / How to Harness</div>
+        <h2 class="harness-title reveal d2">Using the<br><span class="amber">inbox flow</span></h2>
+
+        <div class="harness-steps">
+          <div class="h-step reveal d3">
+            <div class="h-step-num">1</div>
+            <div class="h-step-content">
+              <span class="h-step-title">Drop a task file into <code>inbox/</code></span>
+              <span class="h-step-desc">Any <code>.md</code> file with frontmatter fields <code>task:</code> and <code>mode:</code></span>
+            </div>
+          </div>
+          <div class="h-step reveal d4">
+            <div class="h-step-num">2</div>
+            <div class="h-step-content">
+              <span class="h-step-title">launchd fires <code>drain-inbox.sh</code> every 60s</span>
+              <span class="h-step-desc">Picks up new files, registers them in <code>.orchestrate/tasks/</code></span>
+            </div>
+          </div>
+          <div class="h-step reveal d5">
+            <div class="h-step-num">3</div>
+            <div class="h-step-content">
+              <span class="h-step-title">Harness runs the orchestrate skill</span>
+              <span class="h-step-desc">Executes phases autonomously — research, strategy, implementation, QA</span>
+            </div>
+          </div>
+          <div class="h-step reveal d6">
+            <div class="h-step-num">4</div>
+            <div class="h-step-content">
+              <span class="h-step-title">Results archived to <code>orchestrate-history/</code></span>
+              <span class="h-step-desc">Full run log, phases, lessons learned, and task diff preserved</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: task file example -->
+      <div class="harness-right reveal-right d2">
+        <div class="code-panel-label">Example task file</div>
+
+        <div class="code-file-header">
+          <div class="code-file-dot"></div>
+          inbox/20260624-fix-rate-limit.md
+        </div>
+        <div class="code-block"><span class="c-dashes">---</span>
+<span class="c-key">task</span><span class="c-comment">:</span> <span class="c-str">Fix the rate limit bug in ads/dsp</span>
+<span class="c-key">mode</span><span class="c-comment">:</span> <span class="c-val">auto</span>       <span class="c-comment"># or gated</span>
+<span class="c-dashes">---</span>
+
+<span class="c-comment"># Context</span>
+Rate limiter throws 429 after 100 req/s
+even when limit is set to 500 req/s.
+
+<span class="c-comment"># Expected outcome</span>
+Fix the config and add a regression test.</div>
+
+        <div class="mode-row">
+          <div class="mode-chip">
+            <div class="mode-chip-name">mode: auto</div>
+            <div class="mode-chip-desc">Fully autonomous — no human needed</div>
+          </div>
+          <div class="mode-chip gated">
+            <div class="mode-chip-name">mode: gated</div>
+            <div class="mode-chip-desc">Pauses before any destructive op</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="s-footer">
+      <div class="s-footer-left">
+        <span>haimeng.zhou</span>
+        <span class="hl">orchestrate · usage</span>
+      </div>
+      <div class="s-footer-counter">06 / 08</div>
+    </div>
+
+  </section>
+
+
+  <!-- ============================================================
+       SLIDE 7 — GLOSSARY / KEY TERMS (for newcomers)
+       ============================================================ -->
+  <section class="slide slide-glossary" aria-label="Key terms glossary">
+
+    <div class="s-header">
+      <div class="s-header-brand">
+        <div class="s-header-logo">Orchestrate</div>
+        <div class="s-header-sep"></div>
+        <div class="s-header-crumb">ai-console / <span class="hl">key terms</span></div>
+      </div>
+      <div class="s-header-meta">
+        <div class="status-chip"><div class="status-dot"></div>Running</div>
+        <div class="s-header-date">Jun 2026</div>
+      </div>
+    </div>
+
+    <div class="s-left-accent"></div>
+
+    <div class="s-body">
+
+      <div class="section-label reveal d1">07 / Key Terms</div>
+      <h2 class="gloss-title reveal d2">The jargon, <span class="amber">decoded</span></h2>
+      <p class="gloss-intro reveal d2">Every technical word in this deck, in plain language.</p>
+
+      <div class="gloss-grid">
+
+        <div class="gloss-item teal reveal d3">
+          <span class="gloss-term">inbox/</span>
+          <span class="gloss-def">A plain folder on the laptop. Drop a task file in here and it gets <strong>queued up</strong> — nothing else required.</span>
+        </div>
+
+        <div class="gloss-item reveal d3">
+          <span class="gloss-term">launchd</span>
+          <span class="gloss-def">macOS's built-in scheduler — like an <strong>alarm clock for programs</strong>. Here it checks the inbox every 60 seconds, even after a reboot.</span>
+        </div>
+
+        <div class="gloss-item reveal d3">
+          <span class="gloss-term">the harness</span>
+          <span class="gloss-def">The <strong>autonomous runner</strong> that lets the AI carry out an entire task on its own — no back-and-forth chat needed.</span>
+        </div>
+
+        <div class="gloss-item reveal d4">
+          <span class="gloss-term">orchestrate skill</span>
+          <span class="gloss-def">The recipe the AI follows for every job: <strong>research → plan → build → check</strong>.</span>
+        </div>
+
+        <div class="gloss-item reveal d4">
+          <span class="gloss-term">frontmatter</span>
+          <span class="gloss-def">The little header at the top of a task file — the <code>task:</code> and <code>mode:</code> lines that tell the system what to do.</span>
+        </div>
+
+        <div class="gloss-item reveal d4">
+          <span class="gloss-term">registry</span>
+          <span class="gloss-def">The system's <strong>to-do list</strong> — tracks each task's state: pending, in&nbsp;progress, or done.</span>
+        </div>
+
+        <div class="gloss-item teal reveal d5">
+          <span class="gloss-term">mode: auto / gated</span>
+          <span class="gloss-def"><strong>Auto</strong> = fully hands-off. <strong>Gated</strong> = pauses for your approval before anything risky.</span>
+        </div>
+
+        <div class="gloss-item reveal d5">
+          <span class="gloss-term">tend loop</span>
+          <span class="gloss-def">The recurring check that <strong>picks up waiting tasks</strong> and nudges them along until they finish.</span>
+        </div>
+
+      </div>
+
+    </div>
+
+    <div class="s-footer">
+      <div class="s-footer-left">
+        <span>haimeng.zhou</span>
+        <span class="hl">orchestrate · key terms</span>
+      </div>
+      <div class="s-footer-counter">07 / 08</div>
+    </div>
+
+  </section>
+
+  <!-- ============================================================
+       SLIDE 8 — WIKI AS LLM MEMORY
+       ============================================================ -->
+  <section class="slide slide-memory" aria-label="Wiki as LLM memory">
+
+    <div class="s-header">
+      <div class="s-header-brand">
+        <div class="s-header-logo">Orchestrate</div>
+        <div class="s-header-sep"></div>
+        <div class="s-header-crumb">ai-console / <span class="hl">llm memory</span></div>
+      </div>
+      <div class="s-header-meta">
+        <div class="status-chip"><div class="status-dot"></div>Running</div>
+        <div class="s-header-date">Jun 2026</div>
+      </div>
+    </div>
+
+    <div class="s-left-accent"></div>
+
+    <div class="s-body">
+      <div class="slide-memory" style="position:absolute;inset:0;">
+        <div class="s-body" style="flex-direction:column;padding:52px 100px 48px 100px;">
+
+          <div class="section-label reveal d1">06 / LLM Memory</div>
+          <h2 class="diagram-title reveal d2" style="font-size:60px;margin-bottom:36px;">
+            How Claude <span class="amber">remembers</span> across sessions
+          </h2>
+
+          <div class="mem-layout">
+
+            <!-- PRIMARY: Obsidian Wiki -->
+            <div class="mem-primary reveal d3">
+              <div class="mem-primary-badge">Primary</div>
+              <span class="mem-primary-icon">📖</span>
+              <span class="mem-primary-name">Obsidian Wiki</span>
+              <div class="mem-primary-tagline">obsidian/ — 252 pages, auto-ingested</div>
+              <div class="mem-primary-stat">
+                <div class="mem-stat-chip">252 pages</div>
+                <div class="mem-stat-chip">7 projects</div>
+              </div>
+              <p class="mem-primary-body">
+                The richest memory layer. Project knowledge, runbooks, and architecture docs
+                live here as structured wiki pages. A <strong>PreToolUse hook</strong> runs
+                <code>wiki-query</code> before every grep/find, injecting relevant context
+                automatically. Kept fresh by daily ingest of orchestration history.
+              </p>
+              <div class="mem-skills-row">
+                <div class="mem-skill-tag">/wiki-ingest</div>
+                <div class="mem-skill-tag">/orchestrate-daily-wiki-ingest</div>
+                <div class="mem-skill-tag">/wiki-update</div>
+                <div class="mem-skill-tag">/wiki-query</div>
+              </div>
+            </div>
+
+            <!-- SECONDARY CARDS -->
+            <div class="mem-secondary-col">
+
+              <div class="mem-card hl reveal d4">
+                <div class="mem-card-row">
+                  <div class="mem-card-name">Auto-Memory</div>
+                  <div class="mem-card-path">~/.claude/projects/…/memory/</div>
+                </div>
+                <div class="mem-card-body">
+                  10 structured files indexed by <code>MEMORY.md</code>.
+                  Stores <strong>feedback rules</strong>, user preferences, project facts,
+                  and references that persist independently of any session.
+                  Written by Claude mid-conversation.
+                </div>
+              </div>
+
+              <div class="mem-card hl2 reveal d4">
+                <div class="mem-card-row">
+                  <div class="mem-card-name">Orchestration Context</div>
+                  <div class="mem-card-path">.orchestrate/project.md</div>
+                </div>
+                <div class="mem-card-body">
+                  600+ line shared context carried across <strong>every tend cycle</strong>.
+                  Accumulates discoveries, phase outputs, bug fixes, and lessons learned.
+                  Ground truth for orchestration state.
+                </div>
+              </div>
+
+              <div class="mem-card reveal d5">
+                <div class="mem-card-row">
+                  <div class="mem-card-name">CLAUDE.md</div>
+                  <div class="mem-card-path">~/.claude/ + project root</div>
+                </div>
+                <div class="mem-card-body">
+                  Global + project-level instructions, permissions, and skill autonomy rules.
+                  Loaded at <strong>every session start</strong>.
+                  Synced from <code>ai-toolbox</code> via <code>sync.sh</code>.
+                </div>
+              </div>
+
+              <div class="mem-card reveal d5">
+                <div class="mem-card-row">
+                  <div class="mem-card-name">Workspace Registry</div>
+                  <div class="mem-card-path">workspace.local.md</div>
+                </div>
+                <div class="mem-card-body">
+                  30+ projects with paths, tech stacks, and status.
+                  Machine-local (gitignored). LLM reads on session start to
+                  <strong>navigate the monorepo</strong> across all ~/apps/ projects.
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="s-footer">
+      <div class="s-footer-left">
+        <span>haimeng.zhou</span>
+        <span class="hl">orchestrate · llm memory</span>
+      </div>
+      <div class="s-footer-counter">08 / 08</div>
+    </div>
+
+  </section>
+
+</main>
+</div>
+
+<script>
+/* ===========================================
+   SLIDE PRESENTATION CONTROLLER
+   =========================================== */
+class SlidePresentation {
+    constructor() {
+        this.slides = Array.from(document.querySelectorAll('.slide'));
+        this.current = 0;
+        this.stage = document.getElementById('deckStage');
+        this.total = this.slides.length;
+        this.setupScale();
+        this.setupKeyboard();
+        this.setupTouch();
+        this.setupWheel();
+        this.show(0);
+    }
+
+    setupScale() {
+        const scale = () => {
+            const f = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+            const x = (window.innerWidth - 1920 * f) / 2;
+            const y = (window.innerHeight - 1080 * f) / 2;
+            this.stage.style.transform = `translate(${x}px, ${y}px) scale(${f})`;
+        };
+        scale();
+        window.addEventListener('resize', scale);
+    }
+
+    show(idx) {
+        this.current = Math.max(0, Math.min(idx, this.total - 1));
+        this.slides.forEach((s, i) => {
+            const active = i === this.current;
+            s.classList.toggle('active', active);
+            /* Small delay so the slide is visible before .visible triggers transitions */
+            if (active) {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => s.classList.add('visible'));
+                });
+            } else {
+                s.classList.remove('visible');
+            }
+        });
+    }
+
+    next() { this.show(this.current + 1); }
+    prev() { this.show(this.current - 1); }
+
+    setupKeyboard() {
+        document.addEventListener('keydown', e => {
+            if (e.target.getAttribute('contenteditable')) return;
+            if (['ArrowRight','ArrowDown','Space','PageDown'].includes(e.key) ||
+                e.key === ' ') { e.preventDefault(); this.next(); }
+            if (['ArrowLeft','ArrowUp','PageUp'].includes(e.key)) { e.preventDefault(); this.prev(); }
+        });
+    }
+
+    setupTouch() {
+        let startX = 0, startY = 0;
+        document.addEventListener('touchstart', e => {
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+        }, { passive: true });
+        document.addEventListener('touchend', e => {
+            const dx = e.changedTouches[0].clientX - startX;
+            const dy = e.changedTouches[0].clientY - startY;
+            if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
+                dx < 0 ? this.next() : this.prev();
+            }
+        }, { passive: true });
+    }
+
+    setupWheel() {
+        let last = 0;
+        document.addEventListener('wheel', e => {
+            const now = Date.now();
+            if (now - last < 600) return;
+            last = now;
+            e.deltaY > 0 ? this.next() : this.prev();
+        }, { passive: true });
+    }
+}
+
+/* ===========================================
+   INLINE EDITOR
+   Hover top-left corner or press E to toggle
+   =========================================== */
+class InlineEditor {
+    constructor() {
+        this.isActive = false;
+        this.editableSelectors = [
+            '.title-h1', '.title-sub', '.ttag',
+            '.why-card-title', '.why-card-body',
+            '.diagram-title', '.diag-box-name', '.diag-box-desc',
+            '.ctx-pill-name', '.ctx-pill-desc',
+            '.harness-title', '.h-step-title', '.h-step-desc',
+            '.section-label', '.title-eyebrow',
+        ];
+        this.toggleBtn = document.getElementById('editToggle');
+        this.hotzone = document.querySelector('.edit-hotzone');
+        this.hideTimeout = null;
+        this.setupHotzone();
+        this.setupKeyboard();
+        this.setupSave();
+        this.loadSaved();
+    }
+
+    setupHotzone() {
+        this.hotzone.addEventListener('mouseenter', () => {
+            clearTimeout(this.hideTimeout);
+            this.toggleBtn.classList.add('show');
+        });
+        this.hotzone.addEventListener('mouseleave', () => {
+            this.hideTimeout = setTimeout(() => {
+                if (!this.isActive) this.toggleBtn.classList.remove('show');
+            }, 400);
+        });
+        this.toggleBtn.addEventListener('mouseenter', () => clearTimeout(this.hideTimeout));
+        this.toggleBtn.addEventListener('mouseleave', () => {
+            this.hideTimeout = setTimeout(() => {
+                if (!this.isActive) this.toggleBtn.classList.remove('show');
+            }, 400);
+        });
+        this.hotzone.addEventListener('click', () => this.toggle());
+        this.toggleBtn.addEventListener('click', () => this.toggle());
+    }
+
+    setupKeyboard() {
+        document.addEventListener('keydown', e => {
+            if ((e.key === 'e' || e.key === 'E') &&
+                !e.target.getAttribute('contenteditable')) this.toggle();
+            if (e.key === 'Escape' && this.isActive) this.toggle();
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); this.save(); }
+        });
+    }
+
+    toggle() {
+        this.isActive = !this.isActive;
+        this.toggleBtn.classList.toggle('active', this.isActive);
+        this.toggleBtn.classList.add('show');
+        const targets = document.querySelectorAll(this.editableSelectors.join(','));
+        targets.forEach(el => {
+            el.setAttribute('contenteditable', this.isActive ? 'true' : 'false');
+        });
+        if (!this.isActive) this.save();
+    }
+
+    save() {
+        const data = {};
+        document.querySelectorAll('[data-edit-id]').forEach(el => {
+            data[el.dataset.editId] = el.innerHTML;
+        });
+        /* Also auto-assign ids and capture all editable content */
+        const targets = document.querySelectorAll(this.editableSelectors.join(','));
+        targets.forEach((el, i) => {
+            if (!el.dataset.editId) el.dataset.editId = 'el-' + i;
+            data[el.dataset.editId] = el.innerHTML;
+        });
+        try { localStorage.setItem('inbox-orchestrate-edits', JSON.stringify(data)); } catch(_) {}
+    }
+
+    loadSaved() {
+        try {
+            const data = JSON.parse(localStorage.getItem('inbox-orchestrate-edits') || '{}');
+            const targets = document.querySelectorAll(this.editableSelectors.join(','));
+            targets.forEach((el, i) => {
+                const id = el.dataset.editId || ('el-' + i);
+                el.dataset.editId = id;
+                if (data[id]) el.innerHTML = data[id];
+            });
+        } catch(_) {}
+    }
+
+    setupSave() {
+        document.addEventListener('input', () => { if (this.isActive) this.save(); });
+    }
+}
+
+/* ===========================================
+   BOOT
+   =========================================== */
+const deck = new SlidePresentation();
+const editor = new InlineEditor();
+</script>
+</body>
+</html>

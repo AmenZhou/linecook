@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+
+<!--
+  task-orchestrate tend watchdog launchd agent
+  Runs /task-orchestrate tend go auto via Cursor Agent every 5 minutes.
+
+  BEFORE INSTALLING — set PROJECT_DIR and run install-launchd.sh:
+
+    PROJECT_DIR="$HOME/apps/my-project" bash skills/task-orchestrate/bin/install-launchd.sh
+
+  Logs (relative to WorkingDirectory):
+    stdout -> .orchestrate/logs/heartbeat.log
+    stderr -> .orchestrate/logs/heartbeat-err.log
+-->
+
+<plist version="1.0">
+<dict>
+
+  <key>Label</key>
+  <string>com.orchestrate.tend</string>
+
+  <!-- Command: wrapper reads .orchestrate/agent.conf for cursor vs claude -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__RUN_JOB__</string>
+    <string>tend</string>
+  </array>
+
+  <!-- Fire every 5 minutes (300 seconds) -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <!--
+    WorkingDirectory: REPLACE ~/apps/my-project with your actual project root.
+    The skill reads/writes .orchestrate/ relative to this directory.
+  -->
+  <key>WorkingDirectory</key>
+  <string>~/apps/my-project</string>
+
+  <key>StandardOutPath</key>
+  <string>~/apps/my-project/.orchestrate/logs/heartbeat.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>~/apps/my-project/.orchestrate/logs/heartbeat-err.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+</dict>
+</plist>

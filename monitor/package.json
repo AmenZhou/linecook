@@ -1,0 +1,13 @@
+{
+  "name": "task-orchestrate-monitor",
+  "version": "1.0.0",
+  "description": "task-orchestrate monitor dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/server.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,2300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>task-orchestrate monitor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0d1117;
+    --card:      #161b22;
+    --border:    #30363d;
+    --text:      #c9d1d9;
+    --muted:     #8b949e;
+    --link:      #58a6ff;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --status-running:      #1f6feb;
+    --status-complete:     #238636;
+    --status-failed:       #da3633;
+    --status-needs_human:  #d29922;
+    --status-awaiting_go:  #d29922;
+    --status-pending:      #6e7681;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── header ── */
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    color: #e6edf3;
+    flex: 1;
+  }
+  #attention-badge {
+    display: none;
+    background: var(--status-failed);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 12px;
+    padding: 2px 10px;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  #attention-badge.visible { display: inline-block; }
+  #attention-badge.approval {
+    background: #9e6a03;
+    animation: attention-pulse 2s ease-in-out infinite;
+  }
+  @keyframes attention-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+  }
+  .tab-badge {
+    display: none;
+    background: #9e6a03;
+    color: #fff;
+    border-radius: 8px;
+    padding: 1px 6px;
+    font-size: 11px;
+    margin-left: 4px;
+    font-weight: 700;
+  }
+  .tab-badge.visible { display: inline; }
+  .tab-badge.urgent { background: #da3633; }
+  #meta {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  #analyzer-status {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  #analyzer-status.ok    { color: var(--muted); }
+  #analyzer-status.warn  { color: #e3b341; }
+  #analyzer-status.never { color: var(--muted); }
+  #runner-status {
+    font-size: 12px;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  #runner-status.ok    { color: var(--muted); }
+  #runner-status.warn  { color: #e3b341; }
+  #runner-status.neutral { color: var(--muted); }
+
+  .agent-conf-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+  }
+  .agent-conf-card h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .agent-conf-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px 16px;
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+  .agent-conf-grid dt { color: var(--muted); margin: 0; }
+  .agent-conf-grid dd { margin: 0; font-family: var(--font-mono); }
+  .agent-conf-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .agent-conf-actions button {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #21262d;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .agent-conf-actions button:hover { background: #30363d; }
+  .agent-conf-actions button.active {
+    border-color: #388bfd;
+    background: #1f3a5f;
+  }
+  .agent-conf-msg { font-size: 11px; color: var(--muted); margin-left: 8px; }
+  button {
+    background: #21262d;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 12px;
+    transition: background 0.15s;
+  }
+  button:hover { background: #30363d; }
+
+  /* ── tabs ── */
+  nav {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    background: var(--card);
+  }
+  .tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 10px 16px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab:hover { color: var(--text); background: none; }
+  .tab.active {
+    border-bottom-color: #f78166;
+    color: #e6edf3;
+  }
+
+  /* ── main ── */
+  main {
+    padding: 20px;
+    max-width: 960px;
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── summary bar ── */
+  #status-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+    align-items: center;
+  }
+  .status-chip {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .chip-running      { color: #58a6ff; border-color: #1f6feb; background: #0c2a4a; }
+  .chip-awaiting_go  { color: #e3b341; border-color: #d29922; background: #2d1f00; }
+  .chip-needs_human  { color: #e3b341; border-color: #d29922; background: #2d1f00; }
+  .chip-pending      { color: #6e7681; border-color: #30363d; background: #161b22; }
+  .chip-failed       { color: #f85149; border-color: #da3633; background: #3d0e0e; }
+
+  /* ── phase progress bar ── */
+  .phase-bar {
+    display: flex;
+    gap: 3px;
+    margin: 8px 0;
+    align-items: center;
+  }
+  .phase-seg {
+    width: 18px;
+    height: 10px;
+    border-radius: 2px;
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1;
+  }
+  .phase-seg-complete { background: #238636; }
+  .phase-seg-active   { background: #1f6feb; }
+  .phase-seg-empty    { background: #21262d; border: 1px solid #30363d; }
+  .phase-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-left: 6px;
+    font-family: var(--font-mono);
+  }
+
+  /* ── cards ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .task-id {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: #e6edf3;
+    font-weight: 600;
+  }
+  .rel-time {
+    font-size: 11px;
+    color: var(--muted);
+    margin-left: auto;
+  }
+  .card-body { padding: 12px 16px; }
+  .summary { color: var(--text); margin-bottom: 8px; }
+
+  /* ── badges ── */
+  .badge {
+    border-radius: 12px;
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #fff;
+  }
+  .badge-running      { background: var(--status-running); }
+  .badge-complete     { background: var(--status-complete); }
+  .badge-failed       { background: var(--status-failed); }
+  .badge-needs_human  { background: var(--status-needs_human); color: #000; }
+  .badge-awaiting_go  { background: var(--status-awaiting_go); color: #000; }
+  .badge-pending      { background: var(--status-pending); }
+  .badge-auto  { background: #0c2a4a; border: 1px solid #1f6feb; color: #58a6ff; }
+  .badge-gated { background: #2d1f00; border: 1px solid #d29922; color: #d29922; }
+  .badge-mode  { background: #21262d; border: 1px solid var(--border); color: var(--muted); }
+
+  /* ── expandable sections ── */
+  .section-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--link);
+    cursor: pointer;
+    font-size: 12px;
+    margin-right: 8px;
+    padding: 2px 8px;
+  }
+  .section-toggle:hover { background: #1c2f4f; }
+  .btn-approve {
+    background: #1a3d1a;
+    border: 1px solid #238636;
+    border-radius: 4px;
+    color: #3fb950;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    margin-right: 6px;
+    padding: 3px 10px;
+  }
+  .btn-approve:hover:not(:disabled) { background: #1f5c1f; }
+  .btn-approve:disabled { opacity: 0.5; cursor: default; }
+  .btn-cancel {
+    background: #2d1515;
+    border: 1px solid #da3633;
+    border-radius: 4px;
+    color: #f85149;
+    cursor: pointer;
+    font-size: 12px;
+    margin-right: 6px;
+    padding: 3px 10px;
+  }
+  .btn-cancel:hover:not(:disabled) { background: #3d1a1a; }
+  .btn-cancel:disabled { opacity: 0.5; cursor: default; }
+  .goal-excerpt {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 4px 0 6px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .blocking-reason {
+    font-size: 12px;
+    color: #d97706;
+    background: rgba(217, 119, 6, 0.08);
+    border-left: 2px solid #d97706;
+    padding: 3px 8px;
+    margin: 4px 0 4px;
+    border-radius: 0 3px 3px 0;
+  }
+  .btn-rerun {
+    background: #1f3a1f;
+    border: 1px solid #388038;
+    color: #58a458;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-rerun:hover:not(:disabled) { background: #274f27; }
+  .btn-rerun:disabled { opacity: 0.5; cursor: default; }
+  .expand-area {
+    display: none;
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .expand-area.open { display: block; }
+  pre.content-block {
+    background: #010409;
+    color: #c9d1d9;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    margin: 0;
+    overflow-x: auto;
+    padding: 14px 16px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log-file-list { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .log-file-btn {
+    background: none;
+    border: none;
+    color: var(--link);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    margin: 2px 6px 2px 0;
+    padding: 2px 0;
+    text-decoration: underline;
+  }
+  .log-file-btn:hover { color: #79c0ff; background: none; }
+  .log-content {
+    background: #010409;
+    color: #c9d1d9;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 12px 16px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-top: 1px solid var(--border);
+    display: none;
+  }
+  .log-content.open { display: block; }
+
+  /* ── empty state ── */
+  .empty {
+    color: var(--muted);
+    padding: 40px 0;
+    text-align: center;
+    font-size: 14px;
+  }
+  .empty .checkmark {
+    display: block;
+    font-size: 28px;
+    margin-bottom: 8px;
+    color: #238636;
+  }
+
+  /* ── history tab ── */
+  .history-stats {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .history-stats span { color: var(--text); font-weight: 600; }
+  .history-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .history-filter-btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 12px;
+  }
+  .history-filter-btn.active {
+    background: #1f6feb33;
+    border-color: var(--link);
+    color: var(--link);
+    font-weight: 600;
+  }
+  .history-daily-badge {
+    background: #8957e5;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    margin-right: 6px;
+    padding: 1px 6px;
+    text-transform: uppercase;
+    vertical-align: middle;
+  }
+  #search-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    width: 100%;
+  }
+  #search-box:focus { outline: none; border-color: var(--link); }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--card);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  th:hover { color: var(--text); }
+  th .sort-arrow { margin-left: 4px; opacity: 0.5; }
+  th.sort-active { color: var(--text); }
+  th.sort-active .sort-arrow { opacity: 1; }
+  tr:nth-child(even) td { background: #0e1117; }
+  tr:nth-child(odd) td  { background: var(--bg); }
+  .history-date { font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+  .history-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag-chip {
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+  .history-detail-row td {
+    padding: 0;
+    background: #010409 !important;
+  }
+  .history-detail-row pre {
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .expand-btn {
+    background: none;
+    border: none;
+    color: var(--link);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 4px;
+  }
+  .expand-btn:hover { background: none; color: #79c0ff; }
+
+  /* ── activity feed ── */
+  #activity-feed {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 20px 20px 20px;
+    overflow: hidden;
+    max-width: 960px;
+  }
+  #activity-feed-header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  #activity-feed-header:hover { background: #1c2128; }
+  #activity-feed-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e6edf3;
+    flex: 1;
+  }
+  #activity-feed-meta { font-size: 11px; color: var(--muted); }
+  #activity-toggle-arrow { font-size: 12px; color: var(--muted); transition: transform 0.2s; }
+  #activity-toggle-arrow.open { transform: rotate(90deg); }
+  #activity-body { display: none; }
+  #activity-body.open { display: block; }
+  #heartbeat-pre {
+    background: #010409;
+    color: #7ee787;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 14px 16px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 60px;
+  }
+
+  /* ── inbox ── */
+  .inbox-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .inbox-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .inbox-card-header:hover { background: #1c2128; }
+  .inbox-title {
+    flex: 1;
+    font-size: 13px;
+    color: #e6edf3;
+    font-weight: 500;
+  }
+  .inbox-filename {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge-bug     { background: #da3633; }
+  .badge-enhance { background: #d29922; color: #000; }
+  .badge-inbox   { background: #6e7681; }
+  .badge-approval {
+    background: #9e6a03;
+    color: #fff;
+    border: 1px solid #d29922;
+  }
+  .badge-blocked {
+    background: #da3633;
+    color: #fff;
+  }
+
+  /* ── approval highlight ── */
+  #approval-banner {
+    display: none;
+    background: #2d1f00;
+    border: 1px solid #d29922;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+  }
+  #approval-banner.visible { display: block; }
+  #approval-banner h2 {
+    color: #e3b341;
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  #approval-banner ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  #approval-banner li {
+    font-size: 13px;
+    padding: 4px 0;
+    border-top: 1px solid #3d2e00;
+  }
+  #approval-banner li:first-child { border-top: none; }
+  #tend-health-banner {
+    display: none;
+    background: #3d1300;
+    border: 1px solid #da3633;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+  }
+  #tend-health-banner.visible { display: block; }
+  #tend-health-banner h2 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    color: #ffa657;
+  }
+  #tend-health-banner p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .approval-item-id {
+    font-family: var(--font-mono);
+    color: #e6edf3;
+    font-weight: 600;
+  }
+  .approval-item-label {
+    color: #e3b341;
+    font-size: 12px;
+    margin-left: 8px;
+  }
+  .card-needs-approval {
+    border-color: #d29922;
+    box-shadow: 0 0 0 1px #9e6a03;
+  }
+  .card-needs-approval .card-header {
+    background: #2d1f00;
+  }
+  .card-needs-approval.card-blocked {
+    border-color: #da3633;
+    box-shadow: 0 0 0 1px #da3633;
+  }
+  .card-needs-approval.card-blocked .card-header {
+    background: #3d0e0e;
+  }
+  .inbox-card-needs-approval {
+    border-color: #d29922;
+    box-shadow: 0 0 0 1px #9e6a03;
+  }
+  .inbox-card-needs-approval .inbox-card-header {
+    background: #2d1f00;
+  }
+
+  /* ── kube reviews ── */
+  .kube-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .kube-card-header {
+    padding: 10px 12px;
+    background: #2d1f00;
+    border-bottom: 1px solid #d29922;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .kube-command {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: #0d1117;
+    padding: 10px 12px;
+    margin: 0;
+  }
+  .kube-meta {
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .kube-actions {
+    padding: 10px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .kube-actions button {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .kube-actions button.btn-approve-kube {
+    background: #238636;
+    border-color: #238636;
+    color: #fff;
+  }
+  .kube-actions button.btn-dismiss-kube {
+    background: #21262d;
+    color: #f85149;
+    border-color: #f85149;
+  }
+
+  /* ── loader ── */
+  .loading { color: var(--muted); font-size: 12px; padding: 20px; text-align: center; }
+
+  @media (max-width: 600px) {
+    header { padding: 10px 12px; }
+    main { padding: 12px; }
+    #activity-feed { margin: 12px; }
+    .card-header { gap: 8px; }
+    th, td { padding: 6px 8px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>task-orchestrate monitor</h1>
+  <span id="attention-badge">⚠ Needs Attention: <span id="attention-count">0</span></span>
+  <span id="meta">loading…</span>
+  <span id="runner-status" class="neutral" title="Agent runner from .orchestrate/agent.conf">Runner: —</span>
+  <span id="analyzer-status" class="never">Analyzer: —</span>
+  <button id="refresh-btn" onclick="manualRefresh()">Refresh</button>
+</header>
+
+<nav>
+  <button class="tab active" data-tab="tasks" onclick="switchTab('tasks')">Active Tasks <span id="tasks-approval-badge" class="tab-badge"></span></button>
+  <button class="tab" data-tab="inbox" onclick="switchTab('inbox')">Inbox <span id="inbox-count-badge" class="tab-badge"></span></button>
+  <button class="tab" data-tab="kube" onclick="switchTab('kube')">Kube <span id="kube-count-badge" class="tab-badge"></span></button>
+  <button class="tab" data-tab="pg" onclick="switchTab('pg')">Postgres <span id="pg-count-badge" class="tab-badge"></span></button>
+  <button class="tab" data-tab="history" onclick="switchTab('history')">History</button>
+  <button class="tab" data-tab="launchd" onclick="switchTab('launchd')">LaunchD Jobs</button>
+</nav>
+
+<main>
+  <div id="tasks-panel" class="tab-panel active">
+    <div id="tend-health-banner"></div>
+    <div id="approval-banner"></div>
+    <div id="status-summary"></div>
+    <div class="loading" id="tasks-loading">Loading tasks…</div>
+    <div id="tasks-container"></div>
+  </div>
+
+  <div id="inbox-panel" class="tab-panel">
+    <div class="loading" id="inbox-loading">Loading inbox…</div>
+    <div id="inbox-container"></div>
+  </div>
+
+  <div id="kube-panel" class="tab-panel">
+    <div class="loading" id="kube-loading">Loading kube reviews…</div>
+    <div id="kube-container"></div>
+  </div>
+
+  <div id="pg-panel" class="tab-panel">
+    <div class="loading" id="pg-loading">Loading postgres reviews…</div>
+    <div id="pg-container"></div>
+  </div>
+
+  <div id="history-panel" class="tab-panel">
+    <div id="history-stats" class="history-stats"></div>
+    <div class="history-filters" id="history-filters">
+      <button type="button" class="history-filter-btn active" data-range="today" onclick="setHistoryDateRange('today')">Today</button>
+      <button type="button" class="history-filter-btn" data-range="7d" onclick="setHistoryDateRange('7d')">7 days</button>
+      <button type="button" class="history-filter-btn" data-range="30d" onclick="setHistoryDateRange('30d')">30 days</button>
+      <button type="button" class="history-filter-btn" data-range="all" onclick="setHistoryDateRange('all')">All</button>
+      <button type="button" class="history-filter-btn" data-range="daily" onclick="setHistoryDateRange('daily')">Daily jobs</button>
+    </div>
+    <input id="search-box" type="search" placeholder="Search summary, tags, task ID, or archive content" oninput="filterHistory()" />
+    <div class="loading" id="history-loading">Loading history…</div>
+    <div id="history-container"></div>
+  </div>
+
+  <div id="launchd-panel" class="tab-panel">
+    <div id="agent-conf-card" class="agent-conf-card"></div>
+    <div class="loading" id="launchd-loading">Loading launchd agents…</div>
+    <div id="launchd-container"></div>
+  </div>
+</main>
+
+<section id="activity-feed">
+  <div id="activity-feed-header" onclick="toggleActivityFeed()">
+    <span id="activity-toggle-arrow">▶</span>
+    <span id="activity-feed-title">Activity Feed</span>
+    <span id="activity-feed-meta">—</span>
+  </div>
+  <div id="activity-body">
+    <pre id="heartbeat-pre">Loading…</pre>
+  </div>
+</section>
+
+<script>
+// ── state ─────────────────────────────────────────────────────────────────────
+let tasksData    = { registry: [], tasks: {}, tendHealth: { ok: true }, attention: { taskCount: 0, tasks: [], tendIssues: [] } };
+let historyData  = { manifest: [], entries: {}, rows: [] };
+let inboxData    = { items: [], attention: { inboxCount: 0, approvalCount: 0, approvalItems: [] } };
+let kubeData     = { pending: [], processed: [], pendingCount: 0, attention: { pendingCount: 0 } };
+let pgData       = { pending: [], processed: [], pendingCount: 0, attention: { pendingCount: 0 } };
+let agentStatus  = { runner: 'cursor', tendMode: 'go auto', cursorFallback: 'auto', cursorAutoOpen: false, cursorIdeRunning: false };
+let heartbeatLines = [];
+let logsCache    = {};   // taskId -> { files, logs }
+let countdown    = 15;
+let countdownTimer = null;
+let lastRefreshed = null;
+let activityFeedOpen = false;
+
+// history sort state
+let histSortCol  = 'date';
+let histSortAsc  = false;   // default: newest first (desc)
+let historyFilter = '';
+let historyDateRange = 'today'; // today | 7d | 30d | all | daily
+
+// ── tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === name + '-panel'));
+}
+
+// ── activity feed toggle ───────────────────────────────────────────────────────
+function toggleActivityFeed() {
+  activityFeedOpen = !activityFeedOpen;
+  document.getElementById('activity-body').classList.toggle('open', activityFeedOpen);
+  document.getElementById('activity-toggle-arrow').classList.toggle('open', activityFeedOpen);
+}
+
+// ── refresh ───────────────────────────────────────────────────────────────────
+async function manualRefresh() {
+  countdown = nextCountdown();
+  await doRefresh();
+}
+
+async function doRefresh() {
+  await Promise.all([fetchTasks(), fetchInbox(), fetchKubeReviews(), fetchPgReviews(), fetchHistory(), fetchHeartbeat(), fetchLaunchd(), fetchAgentStatus()]);
+  lastRefreshed = new Date();
+  updateMeta();
+}
+
+function updateMeta() {
+  const timeStr = lastRefreshed ? lastRefreshed.toLocaleTimeString() : '—';
+  document.getElementById('meta').textContent =
+    `last refreshed: ${timeStr}  |  auto-refresh in ${countdown}s`;
+}
+
+const POLL_ACTIVE = 5;   // seconds when tasks are running/awaiting_critic
+const POLL_IDLE   = 15;  // seconds when all tasks are at rest
+
+function nextCountdown() {
+  const active = ['running', 'awaiting_critic'];
+  const hasActive = Array.isArray(tasksData)
+    ? tasksData.some(t => active.includes(t.status))
+    : false;
+  return hasActive ? POLL_ACTIVE : POLL_IDLE;
+}
+
+function startCountdown() {
+  if (countdownTimer) clearInterval(countdownTimer);
+  countdownTimer = setInterval(() => {
+    countdown--;
+    if (countdown <= 0) {
+      countdown = nextCountdown();
+      doRefresh();
+    } else {
+      updateMeta();
+    }
+  }, 1000);
+}
+
+// ── fetch tasks ───────────────────────────────────────────────────────────────
+async function fetchTasks() {
+  try {
+    const r = await fetch('/api/tasks');
+    tasksData = await r.json();
+    renderTasks();
+  } catch (e) {
+    document.getElementById('tasks-container').innerHTML =
+      `<div class="empty">Failed to load tasks: ${esc(e.message)}</div>`;
+  } finally {
+    document.getElementById('tasks-loading').style.display = 'none';
+  }
+}
+
+// ── fetch inbox ───────────────────────────────────────────────────────────────
+async function fetchInbox() {
+  try {
+    const r = await fetch('/api/inbox');
+    inboxData = await r.json();
+    renderInbox();
+  } catch (e) {
+    document.getElementById('inbox-container').innerHTML =
+      `<div class="empty">Failed to load inbox: ${esc(e.message)}</div>`;
+  } finally {
+    document.getElementById('inbox-loading').style.display = 'none';
+  }
+}
+
+function inboxTypeBadge(title) {
+  if (/\[BUG\]/i.test(title))     return `<span class="badge badge-bug">BUG</span>`;
+  if (/\[ENHANCE\]/i.test(title)) return `<span class="badge badge-enhance">ENHANCE</span>`;
+  return `<span class="badge badge-inbox">INBOX</span>`;
+}
+
+function renderInbox() {
+  const items = inboxData.items || [];
+  const container = document.getElementById('inbox-container');
+
+  // Update tab badge — show approval count (amber) or total queued (muted)
+  const inboxBadge = document.getElementById('inbox-count-badge');
+  const approvalInbox = (inboxData.attention && inboxData.attention.approvalCount) || 0;
+  if (approvalInbox > 0) {
+    inboxBadge.textContent = approvalInbox;
+    inboxBadge.className = 'tab-badge visible';
+    inboxBadge.title = `${approvalInbox} gated inbox item(s) need approval`;
+  } else if (items.length > 0) {
+    inboxBadge.textContent = items.length;
+    inboxBadge.className = 'tab-badge visible';
+    inboxBadge.style.background = '#6e7681';
+    inboxBadge.title = `${items.length} item(s) queued for tend`;
+  } else {
+    inboxBadge.className = 'tab-badge';
+    inboxBadge.textContent = '';
+  }
+
+  updateAttentionBadge();
+
+  if (items.length === 0) {
+    container.innerHTML = `
+      <div class="empty">
+        <span class="checkmark">✓</span>
+        Inbox is empty — no pending jobs
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = items.map((item, idx) => {
+    const safeIdx = 'inbox-' + idx;
+    const needsApproval = item.needsApproval;
+    const cardCls = needsApproval ? 'inbox-card inbox-card-needs-approval' : 'inbox-card';
+    const approvalBadge = needsApproval
+      ? `<span class="badge badge-approval">${esc(item.approvalLabel || 'Approval required')}</span>`
+      : '';
+    const modeBadgeHtml = item.mode === 'gated'
+      ? `<span class="badge badge-gated">gated</span>`
+      : `<span class="badge badge-auto">auto</span>`;
+    return `
+<div class="${cardCls}">
+  <div class="inbox-card-header" onclick="toggleInboxCard('${safeIdx}')">
+    ${inboxTypeBadge(item.title)}
+    ${approvalBadge}
+    ${modeBadgeHtml}
+    <span class="inbox-title">${esc(item.title)}</span>
+    <span class="inbox-filename">${esc(item.filename)}</span>
+  </div>
+  <div class="expand-area" id="${safeIdx}">
+    <pre class="content-block">${esc(item.content)}</pre>
+  </div>
+</div>`;
+  }).join('');
+}
+
+function toggleInboxCard(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('open');
+}
+
+// ── fetch kube reviews ────────────────────────────────────────────────────────
+async function fetchKubeReviews() {
+  try {
+    const r = await fetch('/api/kube-reviews');
+    kubeData = await r.json();
+    renderKubeReviews();
+  } catch (e) {
+    document.getElementById('kube-container').innerHTML =
+      `<div class="empty">Failed to load kube reviews: ${esc(e.message)}</div>`;
+  } finally {
+    document.getElementById('kube-loading').style.display = 'none';
+  }
+}
+
+function renderKubeReviews() {
+  const pending = kubeData.pending || [];
+  const processed = kubeData.processed || [];
+  const container = document.getElementById('kube-container');
+
+  const kubeBadge = document.getElementById('kube-count-badge');
+  if (pending.length > 0) {
+    kubeBadge.textContent = pending.length;
+    kubeBadge.className = 'tab-badge visible';
+    kubeBadge.title = `${pending.length} kube review(s) pending approval`;
+  } else {
+    kubeBadge.className = 'tab-badge';
+    kubeBadge.textContent = '';
+  }
+
+  updateAttentionBadge();
+
+  if (pending.length === 0 && processed.length === 0) {
+    container.innerHTML = `
+      <div class="empty">
+        <span class="checkmark">✓</span>
+        No pending kube reviews — live mutating commands appear here when blocked
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  if (pending.length) {
+    html += `<h3 style="font-size:13px;color:var(--muted);margin:0 0 8px">Pending (${pending.length})</h3>`;
+    html += pending.map(r => kubeReviewCard(r, true)).join('');
+  }
+  if (processed.length) {
+    html += `<h3 style="font-size:13px;color:var(--muted);margin:16px 0 8px">Recently resolved</h3>`;
+    html += processed.map(r => kubeReviewCard(r, false)).join('');
+  }
+  container.innerHTML = html;
+}
+
+function kubeReviewCard(review, showActions) {
+  const id = esc(review.id || '');
+  const created = review.created_at ? formatEastern(review.created_at) : '—';
+  const statusBadge = review.status === 'approved'
+    ? '<span class="badge badge-auto">approved</span>'
+    : review.status === 'dismissed'
+      ? '<span class="badge" style="background:#6e7681">dismissed</span>'
+      : '<span class="badge badge-approval">pending</span>';
+  const actions = showActions ? `
+    <div class="kube-actions">
+      <button type="button" onclick="copyKubeText('${id}-cmd')">Copy command</button>
+      <button type="button" onclick="copyKubeText('${id}-path')">Copy script path</button>
+      <button type="button" class="btn-approve-kube" onclick="kubeReviewAction('${id}','approve',this)">Approve live</button>
+      <button type="button" class="btn-dismiss-kube" onclick="kubeReviewAction('${id}','dismiss',this)">Dismiss</button>
+    </div>` : '';
+  return `
+<div class="kube-card" id="kube-card-${id}">
+  <div class="kube-card-header">
+    ${statusBadge}
+    <span class="badge badge-gated">live mutating</span>
+    <span style="font-size:11px;color:var(--muted)">${esc(created)}</span>
+    <span style="font-size:11px;color:var(--muted);margin-left:auto">${id}</span>
+  </div>
+  <div class="kube-meta">Script: <code id="${id}-path">${esc(review.script_path || '')}</code></div>
+  <pre class="kube-command" id="${id}-cmd">${esc(review.command || '')}</pre>
+  ${actions}
+</div>`;
+}
+
+function copyKubeText(elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const text = el.textContent || '';
+  navigator.clipboard.writeText(text).catch(() => {});
+}
+
+async function kubeReviewAction(id, action, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/kube-approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) {
+      alert(body.error || 'Kube review action failed');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    await fetchKubeReviews();
+  } catch (e) {
+    alert(e.message || 'Request failed');
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ── fetch pg reviews ──────────────────────────────────────────────────────────
+async function fetchPgReviews() {
+  try {
+    const r = await fetch('/api/pg-reviews');
+    pgData = await r.json();
+    renderPgReviews();
+  } catch (e) {
+    document.getElementById('pg-container').innerHTML =
+      `<div class="empty">Failed to load pg reviews: ${esc(e.message)}</div>`;
+  } finally {
+    document.getElementById('pg-loading').style.display = 'none';
+  }
+}
+
+function renderPgReviews() {
+  const pending = pgData.pending || [];
+  const processed = pgData.processed || [];
+  const container = document.getElementById('pg-container');
+
+  const pgBadge = document.getElementById('pg-count-badge');
+  if (pending.length > 0) {
+    pgBadge.textContent = pending.length;
+    pgBadge.className = 'tab-badge visible';
+    pgBadge.title = `${pending.length} pg review(s) pending approval`;
+  } else {
+    pgBadge.className = 'tab-badge';
+    pgBadge.textContent = '';
+  }
+
+  updateAttentionBadge();
+
+  if (pending.length === 0 && processed.length === 0) {
+    container.innerHTML = `
+      <div class="empty">
+        <span class="checkmark">✓</span>
+        No pending pg reviews — live mutating SQL appears here when blocked
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  if (pending.length) {
+    html += `<h3 style="font-size:13px;color:var(--muted);margin:0 0 8px">Pending (${pending.length})</h3>`;
+    html += pending.map(r => pgReviewCard(r, true)).join('');
+  }
+  if (processed.length) {
+    html += `<h3 style="font-size:13px;color:var(--muted);margin:16px 0 8px">Recently resolved</h3>`;
+    html += processed.map(r => pgReviewCard(r, false)).join('');
+  }
+  container.innerHTML = html;
+}
+
+function pgReviewCard(review, showActions) {
+  const id = esc(review.id || '');
+  const created = review.created_at ? formatEastern(new Date(review.created_at)) : '—';
+  const statusBadge = review.status === 'approved'
+    ? '<span class="badge badge-auto">approved</span>'
+    : review.status === 'dismissed'
+      ? '<span class="badge" style="background:#6e7681">dismissed</span>'
+      : '<span class="badge badge-approval">pending</span>';
+  const actions = showActions ? `
+    <div class="kube-actions">
+      <button type="button" onclick="copyPgText('${id}-cmd')">Copy command</button>
+      <button type="button" onclick="copyPgText('${id}-path')">Copy script path</button>
+      <button type="button" class="btn-approve-kube" onclick="pgReviewAction('${id}','approve',this)">Approve live</button>
+      <button type="button" class="btn-dismiss-kube" onclick="pgReviewAction('${id}','dismiss',this)">Dismiss</button>
+    </div>` : '';
+  return `
+<div class="kube-card" id="pg-card-${id}">
+  <div class="kube-card-header">
+    ${statusBadge}
+    <span class="badge badge-gated">live mutating SQL</span>
+    <span style="font-size:11px;color:var(--muted)">${esc(created)}</span>
+    <span style="font-size:11px;color:var(--muted);margin-left:auto">${id}</span>
+  </div>
+  <div class="kube-meta">Script: <code id="${id}-path">${esc(review.script_path || '')}</code></div>
+  <pre class="kube-command" id="${id}-cmd">${esc(review.command || '')}</pre>
+  ${actions}
+</div>`;
+}
+
+function copyPgText(elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const text = el.textContent || '';
+  navigator.clipboard.writeText(text).catch(() => {});
+}
+
+async function pgReviewAction(id, action, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/pg-approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) {
+      alert(body.error || 'PG review action failed');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    await fetchPgReviews();
+  } catch (e) {
+    alert(e.message || 'Request failed');
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ── fetch history ─────────────────────────────────────────────────────────────
+async function fetchHistory() {
+  try {
+    const r = await fetch('/api/history');
+    historyData = await r.json();
+    renderHistory();
+  } catch (e) {
+    document.getElementById('history-container').innerHTML =
+      `<div class="empty">Failed to load history: ${esc(e.message)}</div>`;
+  } finally {
+    document.getElementById('history-loading').style.display = 'none';
+  }
+}
+
+// ── fetch & render launchd ───────────────────────────────────────────────────
+let launchdData = [];
+
+async function fetchLaunchd() {
+  try {
+    const r = await fetch('/api/launchd');
+    launchdData = await r.json();
+    renderLaunchd();
+  } catch (e) {
+    document.getElementById('launchd-container').innerHTML =
+      `<div class="empty">Failed to load launchd agents: ${esc(e.message)}</div>`;
+  } finally {
+    document.getElementById('launchd-loading').style.display = 'none';
+  }
+}
+
+async function runLaunchdJob(label, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  try {
+    const r = await fetch('/api/launchd-start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      btn.textContent = 'Triggered';
+      btn.style.background = '#1f6feb';
+      setTimeout(() => fetchLaunchd(), 2000);
+      setTimeout(() => fetchLaunchd(), 4000);
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Run Now'; btn.style.background = ''; }, 5000);
+    } else {
+      btn.textContent = 'Failed';
+      btn.style.background = '#da3633';
+      btn.title = d.error || 'kickstart failed';
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Run Now'; btn.style.background = ''; btn.title = ''; }, 3000);
+    }
+  } catch (e) {
+    btn.textContent = 'Error';
+    btn.style.background = '#da3633';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Run Now'; btn.style.background = ''; }, 3000);
+  }
+}
+
+function launchdStatusBadge(status) {
+  const base = (status || '').split(' ')[0];
+  const map = {
+    ok:        'background:#238636;color:#fff',
+    failed:    'background:#da3633;color:#fff',
+    running:   'background:#1f6feb;color:#fff',
+    throttled: 'background:#9e6a03;color:#fff',
+    degraded:  'background:#9e6a03;color:#fff',
+    blocked:   'background:#da3633;color:#fff',
+    misconfigured: 'background:#da3633;color:#fff',
+    stuck:     'background:#da3633;color:#fff',
+    unknown:   'background:#6e7681;color:#fff',
+  };
+  const style = map[base] || map.unknown;
+  return `<span class="badge" style="${style}" title="${esc(status)}">${esc(status)}</span>`;
+}
+
+function renderLaunchd() {
+  const container = document.getElementById('launchd-container');
+  if (!launchdData.length) {
+    container.innerHTML = '<div class="empty">No com.orchestrate.* launchd agents found.</div>';
+    return;
+  }
+  let html = `<table>
+    <thead><tr>
+      <th>Label</th>
+      <th>Interval</th>
+      <th>Last Run</th>
+      <th>Status</th>
+      <th></th>
+    </tr></thead>
+    <tbody>`;
+  for (const a of launchdData) {
+    const lastRun = a.lastRun
+      ? new Date(a.lastRun).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })
+      : '—';
+    const safeLabel = esc(a.label).replace(/'/g, "\\'");
+    html += `<tr>
+      <td style="font-family:var(--font-mono);font-size:12px">${esc(a.label)}</td>
+      <td>${esc(a.interval)}</td>
+      <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap">${esc(lastRun)}</td>
+      <td>${launchdStatusBadge(a.status)}</td>
+      <td><button class="btn-rerun" onclick="runLaunchdJob('${safeLabel}', this)" style="font-size:11px;padding:3px 8px">Run Now</button></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ── fetch agent status (runner + Cursor IDE) ─────────────────────────────────
+async function fetchAgentStatus() {
+  try {
+    const r = await fetch('/api/agent-status');
+    agentStatus = await r.json();
+    renderRunnerStatus();
+  } catch (_) {
+    const el = document.getElementById('runner-status');
+    if (el) {
+      el.className = 'warn';
+      el.textContent = 'Runner: unavailable';
+      el.title = 'Failed to load .orchestrate/agent.conf';
+    }
+  }
+}
+
+function renderRunnerStatus() {
+  const el = document.getElementById('runner-status');
+  if (!el) return;
+  const runner = (agentStatus.runner || 'cursor').toLowerCase();
+  const tendMode = agentStatus.tendMode || 'go auto';
+  const fallback = agentStatus.cursorFallback || 'auto';
+  const ideUp = Boolean(agentStatus.cursorIdeRunning);
+  if (runner === 'cursor') {
+    const ideLabel = ideUp ? 'IDE ✓' : 'IDE ✗';
+    el.className = ideUp ? 'ok' : 'warn';
+    el.textContent = `Runner: cursor · ${tendMode} · ${ideLabel} · fb:${fallback}`;
+    el.title = ideUp
+      ? `RUNNER=cursor — Cursor IDE running. CURSOR_FALLBACK=${fallback}`
+      : `RUNNER=cursor but IDE not running — ${fallback === 'never' ? 'tend deferred' : 'falls back to claude'}`;
+  } else {
+    el.className = 'neutral';
+    el.textContent = `Runner: claude · ${tendMode}`;
+    el.title = 'RUNNER=claude — Cursor IDE not required for tend';
+  }
+  renderAgentConfCard();
+}
+
+function renderAgentConfCard() {
+  const card = document.getElementById('agent-conf-card');
+  if (!card) return;
+  const runner = (agentStatus.runner || 'cursor').toLowerCase();
+  const tendMode = agentStatus.tendMode || 'go auto';
+  const fallback = agentStatus.cursorFallback || 'auto';
+  const ideUp = Boolean(agentStatus.cursorIdeRunning);
+  const ideCell = runner === 'cursor'
+    ? (ideUp ? '<span style="color:#3fb950">running</span>' : '<span style="color:#e3b341">not running</span>')
+    : '<span style="color:var(--muted)">n/a</span>';
+  card.innerHTML = `
+    <h3>Agent runner (.orchestrate/agent.conf)</h3>
+    <dl class="agent-conf-grid">
+      <div><dt>RUNNER</dt><dd>${esc(runner)}</dd></div>
+      <div><dt>TEND_MODE</dt><dd>${esc(tendMode)}</dd></div>
+      <div><dt>Cursor IDE</dt><dd>${ideCell}</dd></div>
+      <div><dt>CURSOR_FALLBACK</dt><dd>${esc(fallback)}</dd></div>
+    </dl>
+    <div class="agent-conf-actions">
+      <button class="${runner === 'cursor' ? 'active' : ''}" onclick="setRunner('cursor')">Use cursor</button>
+      <button class="${runner === 'claude' ? 'active' : ''}" onclick="setRunner('claude')">Use claude</button>
+      <button class="${fallback === 'auto' ? 'active' : ''}" onclick="setCursorFallback('auto')">Fallback: auto</button>
+      <button class="${fallback === 'never' ? 'active' : ''}" onclick="setCursorFallback('never')">Fallback: never</button>
+      <span id="agent-conf-msg" class="agent-conf-msg"></span>
+    </div>`;
+}
+
+async function postAgentConf(body) {
+  const msg = document.getElementById('agent-conf-msg');
+  if (msg) msg.textContent = 'saving…';
+  try {
+    const r = await fetch('/api/agent-conf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    agentStatus = data;
+    renderRunnerStatus();
+    if (msg) msg.textContent = 'saved (no launchctl reload needed)';
+  } catch (e) {
+    if (msg) msg.textContent = `error: ${e.message}`;
+  }
+}
+
+function setRunner(runner) { postAgentConf({ runner }); }
+function setCursorFallback(cursorFallback) { postAgentConf({ cursorFallback }); }
+
+// ── fetch heartbeat ───────────────────────────────────────────────────────────
+async function fetchHeartbeat() {
+  try {
+    const r = await fetch('/api/heartbeat');
+    const data = await r.json();
+    heartbeatLines = data.lines || [];
+    renderHeartbeat();
+  } catch (_) {
+    heartbeatLines = [];
+    renderHeartbeat();
+  }
+}
+
+function renderHeartbeat() {
+  const pre = document.getElementById('heartbeat-pre');
+  if (heartbeatLines.length === 0) {
+    pre.textContent = '(no heartbeat data)';
+  } else {
+    pre.textContent = heartbeatLines.join('\n');
+  }
+  const metaEl = document.getElementById('activity-feed-meta');
+  if (lastRefreshed) {
+    metaEl.textContent = `updated ${lastRefreshed.toLocaleTimeString()}`;
+  }
+
+  // Update analyzer last-run badge in header
+  const analyzerEl = document.getElementById('analyzer-status');
+  const analyzerLine = [...heartbeatLines].reverse().find(l => l.includes('inbox-analyzer'));
+  if (!analyzerLine) {
+    analyzerEl.className = 'never';
+    analyzerEl.textContent = 'Analyzer: never';
+  } else {
+    const tsMatch = analyzerLine.match(/\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\]/);
+    if (tsMatch) {
+      const ageMs = Date.now() - new Date(tsMatch[1]).getTime();
+      const ageMins = Math.floor(ageMs / 60000);
+      const ageStr = ageMins < 1 ? 'just now' : ageMins === 1 ? '1m ago' : `${ageMins}m ago`;
+      if (ageMins > 20) {
+        analyzerEl.className = 'warn';
+        analyzerEl.textContent = `Analyzer: ${ageStr} ⚠`;
+      } else {
+        analyzerEl.className = 'ok';
+        analyzerEl.textContent = `Analyzer: ${ageStr}`;
+      }
+    }
+  }
+}
+
+// ── fetch logs ────────────────────────────────────────────────────────────────
+async function fetchLogs(taskId) {
+  if (logsCache[taskId]) return logsCache[taskId];
+  try {
+    const r = await fetch(`/api/logs?id=${encodeURIComponent(taskId)}`);
+    const data = await r.json();
+    logsCache[taskId] = data;
+    return data;
+  } catch (_) {
+    return { files: [], logs: {} };
+  }
+}
+
+// ── relative time ──────────────────────────────────────────────────────────────
+function relTime(str) {
+  if (!str || str === '—') return '';
+  // Try to parse ISO or common date strings
+  const d = new Date(str);
+  if (isNaN(d.getTime())) return str;
+  const diffMs = Date.now() - d.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  return `${diffDay}d ago`;
+}
+
+// ── parse total_phases from raw task markdown ──────────────────────────────────
+function parseTotalPhases(md) {
+  if (!md) return null;
+  const m = md.match(/^total_phases:\s*(\d+)/m);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// ── phase progress bar HTML ────────────────────────────────────────────────────
+function phaseBar(currentPhase, totalPhases) {
+  const cur = parseInt(currentPhase, 10) || 0;
+  const tot = parseInt(totalPhases, 10) || 0;
+  if (tot <= 0) return '';
+
+  const segs = [];
+  for (let i = 1; i <= tot; i++) {
+    let cls;
+    if (i < cur) cls = 'phase-seg-complete';
+    else if (i === cur) cls = 'phase-seg-active';
+    else cls = 'phase-seg-empty';
+    segs.push(`<span class="phase-seg ${cls}" title="Phase ${i}"></span>`);
+  }
+  return `<div class="phase-bar">${segs.join('')}<span class="phase-label">${cur}/${tot}</span></div>`;
+}
+
+// ── render attention badge + approval banner ───────────────────────────────────
+function isBlockedStatus(status) {
+  const s = (status || '').toLowerCase();
+  return s === 'needs_human' || s === 'failed';
+}
+
+function updateAttentionBadge() {
+  const taskApproval = (tasksData.attention && tasksData.attention.tasks) || [];
+  const inboxApproval = (inboxData.attention && inboxData.attention.approvalItems) || [];
+  const kubePending = (kubeData.pending || []).length;
+  const pgPending = (pgData.pending || []).length;
+  const tendIssues = (tasksData.attention && tasksData.attention.tendIssues) || [];
+  const total = taskApproval.length + inboxApproval.length + kubePending + pgPending + tendIssues.length;
+  const blockedCount = taskApproval.filter(t => isBlockedStatus(t.status)).length
+    + tendIssues.filter(t => ['failed', 'stuck', 'misconfigured'].includes(t.status)).length;
+
+  const badge = document.getElementById('attention-badge');
+  const countEl = document.getElementById('attention-count');
+  countEl.textContent = total;
+  badge.classList.toggle('visible', total > 0);
+  badge.classList.toggle('approval', total > 0 && blockedCount === 0);
+  badge.style.background = blockedCount > 0 ? '' : (total > 0 ? '#9e6a03' : '');
+  const parts = [];
+  if (taskApproval.length) parts.push(`${taskApproval.length} task(s)`);
+  if (inboxApproval.length) parts.push(`${inboxApproval.length} inbox item(s)`);
+  if (kubePending) parts.push(`${kubePending} kube review(s)`);
+  if (pgPending) parts.push(`${pgPending} pg review(s)`);
+  if (tendIssues.length) parts.push(`${tendIssues.length} tend issue(s)`);
+  badge.title = total > 0 ? parts.join(' + ') + ' need attention' : '';
+
+  // Tasks tab badge
+  const tasksBadge = document.getElementById('tasks-approval-badge');
+  if (taskApproval.length > 0) {
+    tasksBadge.textContent = taskApproval.length;
+    tasksBadge.className = 'tab-badge visible' + (taskApproval.some(t => isBlockedStatus(t.status)) ? ' urgent' : '');
+    tasksBadge.title = `${taskApproval.length} task(s) need approval`;
+  } else {
+    tasksBadge.className = 'tab-badge';
+    tasksBadge.textContent = '';
+  }
+
+  renderTendHealthBanner(tendIssues);
+  renderApprovalBanner(taskApproval, inboxApproval, kubeData.pending || [], pgData.pending || []);
+}
+
+function renderTendHealthBanner(tendIssues) {
+  const banner = document.getElementById('tend-health-banner');
+  if (!tendIssues.length) {
+    banner.className = '';
+    banner.innerHTML = '';
+    return;
+  }
+  const issue = tendIssues[0];
+  const hint = issue.resetHint ? ` Reset: ${issue.resetHint}.` : '';
+  banner.className = 'visible';
+  banner.innerHTML = `
+    <h2>⚠ Tend ${esc(issue.status)}</h2>
+    <p>${esc(issue.message || '')}${esc(hint)} Runner: ${esc(issue.runner || '—')}.</p>`;
+}
+
+function renderApprovalBanner(taskApproval, inboxApproval, kubePending, pgPending) {
+  const banner = document.getElementById('approval-banner');
+  const all = [
+    ...taskApproval.map(t => ({
+      kind: 'task',
+      key: t.id,
+      label: t.approvalLabel || t.status,
+      summary: t.summary,
+      blocked: isBlockedStatus(t.status),
+    })),
+    ...inboxApproval.map(i => ({
+      kind: 'inbox',
+      key: i.filename,
+      label: i.approvalLabel || 'Gated inbox',
+      summary: i.title,
+      blocked: false,
+    })),
+    ...(kubePending || []).map(r => ({
+      kind: 'kube',
+      key: r.id,
+      label: 'Kube review',
+      summary: (r.command || '').slice(0, 80),
+      blocked: false,
+    })),
+    ...(pgPending || []).map(r => ({
+      kind: 'pg',
+      key: r.id,
+      label: 'PG review',
+      summary: (r.command || '').slice(0, 80),
+      blocked: false,
+    })),
+  ];
+
+  if (all.length === 0) {
+    banner.className = '';
+    banner.innerHTML = '';
+    return;
+  }
+
+  banner.className = 'visible';
+  banner.innerHTML = `
+    <h2>⏸ ${all.length} job${all.length === 1 ? '' : 's'} blocked or waiting for your approval</h2>
+    <ul>
+      ${all.map(item => `
+        <li>
+          <span class="approval-item-id">${esc(item.key)}</span>
+          <span class="badge ${item.blocked ? 'badge-blocked' : 'badge-approval'}">${esc(item.label)}</span>
+          <span style="color:var(--muted);margin-left:6px;">${esc(item.summary || '')}</span>
+        </li>`).join('')}
+    </ul>`;
+}
+
+// ── status summary bar ─────────────────────────────────────────────────────────
+const STATUS_ORDER = ['running', 'needs_human', 'awaiting_go', 'pending', 'failed'];
+const STATUS_LABEL = {
+  running: 'running',
+  needs_human: 'needs human',
+  awaiting_go: 'awaiting go',
+  pending: 'pending',
+  failed: 'failed',
+};
+
+function renderStatusSummary(activeTasks) {
+  const counts = {};
+  for (const t of activeTasks) {
+    const s = (t.status || 'pending').toLowerCase();
+    counts[s] = (counts[s] || 0) + 1;
+  }
+
+  const chips = STATUS_ORDER
+    .filter(s => counts[s] > 0)
+    .map(s => {
+      const label = STATUS_LABEL[s] || s;
+      return `<span class="status-chip chip-${s}">● ${counts[s]} ${label}</span>`;
+    });
+
+  const el = document.getElementById('status-summary');
+  el.innerHTML = chips.join('');
+}
+
+// ── render tasks ──────────────────────────────────────────────────────────────
+function statusBadge(status) {
+  const s = (status || 'pending').toLowerCase().replace(/[^a-z_]/g, '_');
+  return `<span class="badge badge-${s}">${esc(status || 'unknown')}</span>`;
+}
+
+function modeBadge(mode) {
+  const m = (mode || '').toLowerCase();
+  const cls = m === 'auto' ? 'badge badge-auto' : m === 'gated' ? 'badge badge-gated' : 'badge badge-mode';
+  return mode ? `<span class="${cls}">${esc(mode)}</span>` : '';
+}
+
+function renderTasks() {
+  const { registry, tasks } = tasksData;
+  const allActive = (registry || []).filter(r => r.status !== 'complete');
+
+  // Approval-needed tasks first, then blocked before awaiting_go
+  const sortRank = (r) => {
+    if (isBlockedStatus(r.status)) return 0;
+    if (r.needsApproval) return 1;
+    return 2;
+  };
+  allActive.sort((a, b) => sortRank(a) - sortRank(b) || (a.id || '').localeCompare(b.id || ''));
+
+  updateAttentionBadge();
+  renderStatusSummary(allActive);
+
+  const container = document.getElementById('tasks-container');
+
+  if (allActive.length === 0) {
+    container.innerHTML = `
+      <div class="empty">
+        <span class="checkmark">✓</span>
+        No active tasks — all clear
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = allActive.map(row => {
+    const id = row.id || '(unknown)';
+    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const taskMd = tasks[id] || null;
+    const hasDetails = !!taskMd;
+    const totalPhases = parseTotalPhases(taskMd);
+    const relActivity = relTime(row.last_activity);
+    const needsApproval = row.needsApproval;
+    const blocked = isBlockedStatus(row.status);
+    const cardCls = needsApproval
+      ? `card card-needs-approval${blocked ? ' card-blocked' : ''}`
+      : 'card';
+    const approvalBadge = needsApproval
+      ? `<span class="badge ${blocked ? 'badge-blocked' : 'badge-approval'}">${esc(row.approvalLabel || 'Approval required')}</span>`
+      : '';
+
+    const isGated = row.status === 'awaiting_go';
+    const isNeedsHuman = row.status === 'needs_human';
+    const isPendingOrRunning = row.status === 'pending' || row.status === 'running';
+    const goalExcerptHtml = row.goalExcerpt
+      ? `<div class="goal-excerpt">${esc(row.goalExcerpt)}</div>`
+      : '';
+    const blockingReasonHtml = (isNeedsHuman && row.blockingReason)
+      ? `<div class="blocking-reason">&#x26A0; ${esc(row.blockingReason)}</div>`
+      : '';
+    const pendingGoalHtml = isPendingOrRunning && row.goalExcerpt
+      ? `<div class="goal-excerpt" style="margin-top:6px;">${esc(row.goalExcerpt)}</div>`
+      : '';
+    const gatedActions = isGated ? `
+    ${goalExcerptHtml}
+    <div style="margin-top:8px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+      <button class="section-toggle" onclick="toggleInboxPreview('${safeId}', '${esc(id)}')">Full Context</button>
+      <button class="btn-approve" onclick="approveAndRun(this,'${esc(id)}','gated')" title="Approve and run with phase checkpoints" style="background:#1f3d5c;border-color:#4d8ec7;color:#a8d4f5;">&#9654; Go</button>
+      <button class="btn-approve" onclick="approveAndRun(this,'${esc(id)}','auto')" title="Approve and run automatically (no checkpoints)">&#9654; Go Auto</button>
+      <button class="btn-cancel" onclick="approveGatedTask(this,'${esc(id)}','cancel')" title="Cancel this gated task">&#x2717; Cancel</button>
+    </div>
+    <div class="expand-area" id="inbox-${safeId}">
+      <pre class="content-block" id="inbox-content-${safeId}" style="color:var(--muted);font-size:12px;">Loading…</pre>
+    </div>` : '';
+    const needsHumanActions = isNeedsHuman ? `
+    ${blockingReasonHtml}
+    ${goalExcerptHtml}
+    <div style="margin-top:8px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+      <button class="btn-rerun" onclick="rerunTask(this,'${esc(id)}')" title="Reset to pending and trigger tend">&#x21BA; Re-run</button>
+      <button class="section-toggle" onclick="toggleResolveBox('${safeId}')">Resolve&#x2026;</button>
+      <button class="section-toggle" onclick="toggleDetails('${safeId}')">Details</button>
+      <button class="section-toggle" onclick="toggleLogs('${safeId}', '${esc(id)}')">Logs</button>
+    </div>
+    <div class="expand-area" id="resolve-${safeId}" style="display:none;margin-top:8px;">
+      <textarea id="resolve-text-${safeId}" placeholder="Describe the answer or decision that unblocks this task…" style="width:100%;min-height:80px;background:var(--card-bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px;font-size:13px;resize:vertical;box-sizing:border-box;"></textarea>
+      <div style="margin-top:6px;display:flex;gap:6px;">
+        <button class="btn-approve" onclick="submitResolution(this,'${esc(id)}','${safeId}')" style="background:#1f3d1f;border-color:#3d7a3d;color:#a8f5a8;">&#10003; Submit Resolution</button>
+        <button class="btn-cancel" onclick="toggleResolveBox('${safeId}')">Cancel</button>
+      </div>
+    </div>` : '';
+
+    return `
+<div class="${cardCls}">
+  <div class="card-header">
+    <span class="task-id">${esc(id)}</span>
+    ${approvalBadge}
+    ${statusBadge(row.status)}
+    ${modeBadge(row.mode)}
+    ${relActivity ? `<span class="rel-time">${esc(relActivity)}</span>` : ''}
+  </div>
+  <div class="card-body">
+    <div class="summary">${esc(row.summary || '(no summary)')}</div>
+    ${phaseBar(row.current_phase, totalPhases)}
+    ${pendingGoalHtml}
+    ${gatedActions}
+    ${needsHumanActions}
+    <div class="actions" style="margin-top:8px;">
+      ${!isNeedsHuman ? (hasDetails ? `<button class="section-toggle" onclick="toggleDetails('${safeId}')">Details</button>` : '') : ''}
+      ${!isNeedsHuman ? `<button class="section-toggle" onclick="toggleLogs('${safeId}', '${esc(id)}')">Logs</button>` : ''}
+    </div>
+    ${hasDetails ? `
+    <div class="expand-area" id="details-${safeId}">
+      <pre class="content-block">${esc(taskMd)}</pre>
+    </div>` : ''}
+    <div class="expand-area" id="logs-${safeId}">
+      <div class="log-file-list" id="log-files-${safeId}">
+        <span style="color:var(--muted);font-size:12px;">Loading logs…</span>
+      </div>
+      <div id="log-viewer-${safeId}"></div>
+    </div>
+  </div>
+</div>`;
+  }).join('');
+}
+
+function toggleDetails(safeId) {
+  const el = document.getElementById('details-' + safeId);
+  if (el) el.classList.toggle('open');
+}
+
+async function toggleInboxPreview(safeId, taskId) {
+  const area = document.getElementById('inbox-' + safeId);
+  if (!area) return;
+  const isOpen = area.classList.contains('open');
+  if (isOpen) { area.classList.remove('open'); return; }
+  area.classList.add('open');
+  const contentEl = document.getElementById('inbox-content-' + safeId);
+  if (contentEl && contentEl.dataset.loaded) return;
+  try {
+    const res = await fetch('/api/task-details?id=' + encodeURIComponent(taskId));
+    const data = await res.json();
+    if (!contentEl) return;
+    if (data.inboxContent) {
+      contentEl.textContent = data.inboxContent;
+      contentEl.style.color = '';
+    } else {
+      contentEl.textContent = data.error || 'No inbox file found for this task.';
+      contentEl.style.color = 'var(--muted)';
+    }
+    contentEl.dataset.loaded = '1';
+  } catch (e) {
+    if (contentEl) { contentEl.textContent = 'Failed to load: ' + e.message; contentEl.style.color = 'var(--danger)'; }
+  }
+}
+
+async function approveGatedTask(btn, taskId, mode) {
+  if (btn.disabled) return;
+  const label = mode === 'cancel' ? 'Cancelling…' : 'Approving…';
+  btn.disabled = true;
+  btn.textContent = label;
+  const siblingBtns = btn.parentElement.querySelectorAll('button');
+  siblingBtns.forEach(b => { b.disabled = true; });
+  try {
+    const res = await fetch('/api/task-approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: taskId, mode }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('Error: ' + data.error);
+      siblingBtns.forEach(b => { b.disabled = false; });
+      btn.textContent = mode === 'cancel' ? '✗ Cancel' : '▶ Go Auto';
+    } else {
+      await fetchTasks();
+    }
+  } catch (e) {
+    alert('Request failed: ' + e.message);
+    siblingBtns.forEach(b => { b.disabled = false; });
+    btn.textContent = mode === 'cancel' ? '✗ Cancel' : '▶ Go Auto';
+  }
+}
+
+async function approveAndRun(btn, taskId, mode) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = 'Approving…';
+  const siblingBtns = btn.parentElement.querySelectorAll('button');
+  siblingBtns.forEach(b => { b.disabled = true; });
+  try {
+    const res = await fetch('/api/task-approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: taskId, mode }),
+    });
+    const data = await res.json();
+    const origText = mode === 'gated' ? '▶ Go' : '▶ Go Auto';
+    if (data.error) { alert('Error: ' + data.error); siblingBtns.forEach(b => { b.disabled = false; }); btn.textContent = origText; return; }
+    // Trigger immediate tend run (gated mode will pause at first phase checkpoint)
+    await fetch('/api/task-runnow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: taskId }),
+    }).catch(() => {});
+    btn.textContent = '✓ Queued…';
+    setTimeout(() => fetchTasks(), 3000);
+  } catch (e) {
+    alert('Network error: ' + e.message);
+    siblingBtns.forEach(b => { b.disabled = false; });
+    btn.textContent = mode === 'gated' ? '▶ Go' : '▶ Go Auto';
+  }
+}
+
+async function rerunTask(btn, taskId) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = 'Queuing…';
+  try {
+    const res = await fetch('/api/task-runnow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: taskId }),
+    });
+    const data = await res.json();
+    if (data.error) { alert('Error: ' + data.error); btn.disabled = false; btn.textContent = '↺ Re-run'; return; }
+    btn.textContent = '✓ Running…';
+    setTimeout(() => fetchTasks(), 3000);
+  } catch (e) {
+    alert('Network error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '↺ Re-run';
+  }
+}
+
+function toggleResolveBox(safeId) {
+  const box = document.getElementById(`resolve-${safeId}`);
+  if (!box) return;
+  const isHidden = box.style.display === 'none' || !box.style.display;
+  box.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    const ta = document.getElementById(`resolve-text-${safeId}`);
+    if (ta) ta.focus();
+  }
+}
+
+async function submitResolution(btn, taskId, safeId) {
+  const ta = document.getElementById(`resolve-text-${safeId}`);
+  const resolution = ta ? ta.value.trim() : '';
+  if (!resolution) { alert('Please enter a resolution before submitting.'); return; }
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+  try {
+    const res = await fetch('/api/task-resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: taskId, resolution }),
+    });
+    const data = await res.json();
+    if (data.error) { alert('Error: ' + data.error); btn.disabled = false; btn.textContent = '✓ Submit Resolution'; return; }
+    const box = document.getElementById(`resolve-${safeId}`);
+    if (box) box.style.display = 'none';
+    if (ta) ta.value = '';
+    btn.disabled = false;
+    btn.textContent = '✓ Submit Resolution';
+    setTimeout(() => fetchTasks(), 3000);
+  } catch (e) {
+    alert('Network error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '✓ Submit Resolution';
+  }
+}
+
+async function toggleLogs(safeId, taskId) {
+  const area = document.getElementById('logs-' + safeId);
+  if (!area) return;
+  const isOpen = area.classList.contains('open');
+  if (isOpen) { area.classList.remove('open'); return; }
+
+  area.classList.add('open');
+  const logData = await fetchLogs(taskId);
+  const fileListEl = document.getElementById('log-files-' + safeId);
+  const viewerEl   = document.getElementById('log-viewer-' + safeId);
+
+  if (!logData.files || logData.files.length === 0) {
+    fileListEl.innerHTML = '<span style="color:var(--muted);font-size:12px;">No log files found for this task.</span>';
+    return;
+  }
+
+  fileListEl.innerHTML = logData.files.map(f =>
+    `<button class="log-file-btn" onclick="showLog('${safeId}', '${esc(f)}')">${esc(f)}</button>`
+  ).join('');
+
+  viewerEl.innerHTML = logData.files.map(f =>
+    `<div class="log-content" id="log-${safeId}-${cssId(f)}">${esc(logData.logs[f] || '')}</div>`
+  ).join('');
+}
+
+function showLog(safeId, filename) {
+  const viewerEl = document.getElementById('log-viewer-' + safeId);
+  if (!viewerEl) return;
+  const targetId = 'log-' + safeId + '-' + cssId(filename);
+  viewerEl.querySelectorAll('.log-content').forEach(el => {
+    el.classList.toggle('open', el.id === targetId);
+  });
+}
+
+function cssId(str) {
+  return str.replace(/[^a-zA-Z0-9]/g, '_');
+}
+
+// ── render history ────────────────────────────────────────────────────────────
+
+function parseDateFromFilename(filename) {
+  const ts = (filename || '').match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
+  if (ts) return new Date(`${ts[1]}-${ts[2]}-${ts[3]}T${ts[4]}:${ts[5]}:${ts[6]}Z`);
+  if (!/\.md$/i.test(filename || '')) return null;
+  const day = (filename || '').match(/^(\d{4})(\d{2})(\d{2})-/);
+  if (day) return new Date(`${day[1]}-${day[2]}-${day[3]}T12:00:00Z`);
+  return null;
+}
+
+function parseDate(str) {
+  if (!str) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return new Date(`${str}T12:00:00Z`);
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Parse server dateIso as UTC — never interpret timezone-less ISO as local. */
+function parseIsoUtc(iso) {
+  if (!iso) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return new Date(`${iso}T12:00:00Z`);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(iso) && !/[Z+-]/.test(iso)) return new Date(`${iso}Z`);
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatEastern(d) {
+  return d.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
+// Merge registry complete rows + manifest entries, dedup by task ID
+function manifestMatchesRegistry(filename, regId) {
+  if (!filename || !regId) return false;
+  const base = filename.replace(/\.md$/i, '');
+  if (base.startsWith(regId)) return true;
+  const escapedId = regId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (new RegExp(`-${escapedId}(?:-|$)`).test(base)) return true;
+  const idMatch = regId.match(/^(\d{8})-(.+)$/);
+  if (!idMatch) return base.includes(regId);
+  const [, datePart, idSuffix] = idMatch;
+  if (!base.startsWith(datePart)) return false;
+  const escaped = idSuffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${datePart}(?:-\\d{6})?-${escaped}(?:-|$)`).test(base);
+}
+
+function buildHistoryRows() {
+  if (Array.isArray(historyData.rows) && historyData.rows.length > 0) {
+    return historyData.rows;
+  }
+
+  const { registry } = tasksData;
+  const { manifest, entries } = historyData;
+
+  const rows = [];
+  const seenFiles = new Set();
+
+  for (const reg of (registry || [])) {
+    if (reg.status !== 'complete') continue;
+    const matchEntry = (manifest || []).find(e => manifestMatchesRegistry(e.filename, reg.id));
+    if (matchEntry) {
+      seenFiles.add(matchEntry.filename);
+      rows.push({
+        date: matchEntry.date,
+        dateIso: reg.last_activity || matchEntry.date || '',
+        filename: matchEntry.filename,
+        summary: matchEntry.summary || reg.summary,
+        tags: matchEntry.tags,
+        taskId: reg.id,
+        status: reg.status,
+        hasArchive: !!(entries[matchEntry.filename] || '').trim(),
+        content: entries[matchEntry.filename] || '',
+      });
+    } else {
+      rows.push({
+        date: reg.last_activity || '',
+        dateIso: reg.last_activity || '',
+        filename: reg.id,
+        summary: reg.summary,
+        tags: '',
+        taskId: reg.id,
+        status: reg.status,
+        hasArchive: false,
+        content: '',
+      });
+    }
+  }
+
+  for (const e of (manifest || [])) {
+    if (seenFiles.has(e.filename)) continue;
+    seenFiles.add(e.filename);
+    const taskId = (e.filename || '').match(/\d{8}-inbox-[A-Za-z0-9]+/)?.[0] || '';
+    rows.push({
+      date: e.date,
+      dateIso: e.date || '',
+      filename: e.filename,
+      summary: e.summary,
+      tags: e.tags,
+      taskId,
+      status: 'complete',
+      hasArchive: !!(entries[e.filename] || '').trim(),
+      content: entries[e.filename] || '',
+    });
+  }
+
+  return rows;
+}
+
+function enrichHistoryRows(rows) {
+  for (const row of rows) {
+    const d = row.dateIso
+      ? parseIsoUtc(row.dateIso)
+      : parseDate(row.date);
+    row.dateSort = d && !isNaN(d.getTime()) ? d.getTime() : 0;
+    row.dateDisplay = d && !isNaN(d.getTime()) ? formatEastern(d) : (row.date || '—');
+  }
+  return rows;
+}
+
+function sortHistoryRows(rows) {
+  return [...rows].sort((a, b) => {
+    let va, vb;
+    if (histSortCol === 'date') {
+      va = a.dateSort || 0;
+      vb = b.dateSort || 0;
+    } else {
+      va = a[histSortCol] || '';
+      vb = b[histSortCol] || '';
+    }
+    const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+    if (cmp === 0 && histSortCol === 'date') {
+      const ta = a.taskId || a.filename || '';
+      const tb = b.taskId || b.filename || '';
+      const tie = ta < tb ? -1 : ta > tb ? 1 : 0;
+      return histSortAsc ? tie : -tie;
+    }
+    return histSortAsc ? cmp : -cmp;
+  });
+}
+
+function todayEasternYmd() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
+function easternYmdFromIso(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
+function isDailyHistoryRow(row) {
+  const hay = `${row.summary || ''} ${row.tags || ''} ${row.taskId || ''} ${row.filename || ''}`.toLowerCase();
+  return /inbox-log-analyzer|wiki-ingest|daily-digest|daily enqueue|orchestrate-daily|analyzer-daily|0 new findings|daily scan|daily run/.test(hay);
+}
+
+function historyDailyBadge(row) {
+  if (!isDailyHistoryRow(row)) return '';
+  return '<span class="history-daily-badge" title="Recurring daily launchd / enqueue job">daily</span>';
+}
+
+function setHistoryDateRange(range) {
+  historyDateRange = range;
+  document.querySelectorAll('.history-filter-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.range === range);
+  });
+  renderHistory();
+}
+
+function filterHistoryByRange(rows) {
+  if (historyDateRange === 'all') return rows;
+  if (historyDateRange === 'daily') return rows.filter(isDailyHistoryRow);
+  const todayYmd = todayEasternYmd();
+  if (historyDateRange === 'today') {
+    return rows.filter(r => easternYmdFromIso(r.dateIso) === todayYmd);
+  }
+  const days = historyDateRange === '30d' ? 30 : 7;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return rows.filter(r => (r.dateSort || 0) >= cutoff);
+}
+
+function filterHistoryRows(rows) {
+  if (!historyFilter) return rows;
+  const norm = (s) => (s || '').toLowerCase().replace(/[_-]/g, ' ');
+  const tokens = norm(historyFilter).split(/\s+/).filter(Boolean);
+  return rows.filter(r => {
+    const contentSnippet = (r.content || '').slice(0, 2000);
+    const hay = norm(`${r.summary} ${r.tags} ${r.filename} ${r.taskId || ''} ${contentSnippet}`);
+    return tokens.every(t => hay.includes(t));
+  });
+}
+
+function historyTaskBadge(taskId) {
+  if (!taskId) return '';
+  const m = taskId.match(/inbox-(.+)$/);
+  const label = m ? m[1] : taskId;
+  return `<span class="tag-chip" title="${esc(taskId)}">${esc(label)}</span> `;
+}
+
+function historyArchiveBadge(hasArchive) {
+  if (hasArchive !== false) return '';
+  return `<span class="badge" style="background:#6e7681;color:#fff;margin-right:6px" title="No orchestrate-history archive — content synthesized from registry/logs">logs only</span>`;
+}
+
+function filterHistory() {
+  historyFilter = document.getElementById('search-box').value.toLowerCase();
+  renderHistory();
+}
+
+function setHistorySort(col) {
+  if (histSortCol === col) {
+    histSortAsc = !histSortAsc;
+  } else {
+    histSortCol = col;
+    histSortAsc = col !== 'date'; // date defaults desc; others asc
+  }
+  renderHistory();
+}
+
+function renderHistory() {
+  const container = document.getElementById('history-container');
+  const allRows = enrichHistoryRows(buildHistoryRows());
+  const rangedRows = filterHistoryByRange(allRows);
+
+  // Stats
+  const stats = historyData.stats || {};
+  const totalCount = stats.total != null ? stats.total : allRows.length;
+  const archiveCount = stats.withArchive != null ? stats.withArchive : allRows.filter(r => r.hasArchive !== false).length;
+  const registryOnlyCount = stats.registryOnly != null ? stats.registryOnly : allRows.filter(r => r.hasArchive === false).length;
+  const missingIds = Array.isArray(stats.missingCompleteIds) ? stats.missingCompleteIds : [];
+  const statsEl = document.getElementById('history-stats');
+  const rangeLabel = { today: 'today', '7d': '7 days', '30d': '30 days', all: 'all time', daily: 'daily jobs' }[historyDateRange] || historyDateRange;
+  statsEl.innerHTML = `Showing: <span>${rangedRows.length}</span> of <span>${totalCount}</span> (${rangeLabel})  ·  Archives: <span>${archiveCount}</span>  ·  Logs only: <span>${registryOnlyCount}</span>`;
+  if (missingIds.length > 0) {
+    statsEl.innerHTML += `  ·  <span style="color:#f85149" title="${esc(missingIds.join(', '))}">Missing: ${missingIds.length}</span>`;
+  }
+
+  if (allRows.length === 0) {
+    container.innerHTML = '<div class="empty">No history entries found.</div>';
+    return;
+  }
+
+  if (rangedRows.length === 0) {
+    container.innerHTML = `<div class="empty">No entries for <strong>${esc(rangeLabel)}</strong>. Try <button type="button" class="history-filter-btn active" onclick="setHistoryDateRange('all')">All</button> or <button type="button" class="history-filter-btn active" onclick="setHistoryDateRange('daily')">Daily jobs</button>.</div>`;
+    return;
+  }
+
+  const filtered = filterHistoryRows(sortHistoryRows(rangedRows));
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty">No entries match your search.</div>';
+    return;
+  }
+
+  const colDef = [
+    { key: 'date',     label: 'Date' },
+    { key: 'summary',  label: 'Summary' },
+    { key: 'tags',     label: 'Tags' },
+    { key: 'status',   label: 'Status' },
+    { key: '_expand',  label: '' },
+  ];
+
+  function thHtml(col) {
+    if (col.key === '_expand') return `<th></th>`;
+    const isActive = histSortCol === col.key;
+    const arrow = isActive ? (histSortAsc ? '▲' : '▼') : '▲';
+    return `<th class="${isActive ? 'sort-active' : ''}" onclick="setHistorySort('${col.key}')">
+      ${col.label}<span class="sort-arrow">${arrow}</span>
+    </th>`;
+  }
+
+  let html = `<table><thead><tr>${colDef.map(thHtml).join('')}</tr></thead><tbody>`;
+
+  filtered.forEach((e, idx) => {
+    const rowId = 'hrow-' + idx;
+    const tags = (e.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+    const tagChips = tags.map(t => `<span class="tag-chip">${esc(t)}</span>`).join('');
+    html += `
+    <tr style="cursor:pointer" onclick="toggleHistoryRow('${rowId}', this)">
+      <td class="history-date">${esc(e.dateDisplay || e.date)}</td>
+      <td>${historyDailyBadge(e)}${historyTaskBadge(e.taskId)}${historyArchiveBadge(e.hasArchive)}${esc(e.summary)}</td>
+      <td><div class="history-tags">${tagChips || '<span style="color:var(--muted)">—</span>'}</div></td>
+      <td>${statusBadge(e.status)}</td>
+      <td><button class="expand-btn" title="Expand">▸</button></td>
+    </tr>
+    <tr id="${rowId}" class="history-detail-row" style="display:none;">
+      <td colspan="5"><pre class="content-block">${esc(e.content)}</pre></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function toggleHistoryRow(rowId, triggerRow) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const hidden = row.style.display === 'none';
+  row.style.display = hidden ? 'table-row' : 'none';
+  // Update arrow in the clicked row
+  const btn = triggerRow ? triggerRow.querySelector('.expand-btn') : null;
+  if (btn) btn.textContent = hidden ? '▾' : '▸';
+}
+
+// ── utils ─────────────────────────────────────────────────────────────────────
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── init ──────────────────────────────────────────────────────────────────────
+(async function init() {
+  await doRefresh();
+  startCountdown();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Orchestrate launchd runner — read by .orchestrate/bin/run-job.sh each cycle.
+# Change settings and save; no launchctl reload needed.
+#
+# com.orchestrate.tend → run-job.sh tend → cursor-agent "/task-orchestrate tend …"
+
+RUNNER=cursor        # cursor | claude
+TEND_MODE="go auto"  # go auto (default) | notify — notify = tend only, no unattended execution
+
+# When RUNNER=cursor, cursor-agent requires Cursor IDE open (pgrep -xq Cursor).
+# CURSOR_FALLBACK=auto (default) — IDE closed → fall back to claude on session/connection errors.
+# CURSOR_FALLBACK=never — IDE closed → defer tend (exit 0, heartbeat note); no claude fallback.
+CURSOR_FALLBACK=auto
+
+# Optional: attempt `open -a Cursor` once before the IDE check when RUNNER=cursor.
+# CURSOR_AUTO_OPEN=true
+
+# Flip runner from CLI (no launchctl reload):
+#   bash .orchestrate/bin/set-runner.sh claude|cursor
+# Or POST /api/agent-conf on the monitor dashboard.
+
+# Additional launchd jobs to show in the dashboard LaunchD tab (comma-separated labels).
+# Default: only com.orchestrate.* jobs are shown.
+# LAUNCHD_WATCH=com.inbox-zero.catchup,com.myapp.nightly
+
+# Optional overrides (defaults shown):
+# CURSOR_BIN=$HOME/.local/bin/cursor-agent
+# CLAUDE_BIN=$HOME/.local/bin/claude

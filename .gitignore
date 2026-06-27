@@ -1,0 +1,16 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Runtime state (these are created per-project, never committed)
+.orchestrate/logs/
+.orchestrate/.tend.lock
+*.bak
+*.bak-*
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+
+<!--
+  task-orchestrate rescue watchdog launchd agent
+  Pure-bash safety net: detects stale tend lock + stale heartbeat → drains inbox +
+  kicks run-job.sh tend. Runs every 10 min, independent of com.orchestrate.tend.
+
+  Installed by install-launchd.sh (no manual setup needed).
+-->
+
+<plist version="1.0">
+<dict>
+
+  <key>Label</key>
+  <string>com.orchestrate.rescue</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__RESCUE_SCRIPT__</string>
+    <string>__PROJECT_DIR__</string>
+  </array>
+
+  <!-- Run every 10 minutes — safety net interval (tend runs every 5 min) -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_DIR__</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>__PROJECT_DIR__/.orchestrate/logs/rescue.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_DIR__/.orchestrate/logs/rescue-err.log</string>
+
+</dict>
+</plist>
