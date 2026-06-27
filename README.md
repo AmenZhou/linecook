@@ -1,6 +1,8 @@
-# Inbox & Orchestrate
+# linecook
 
-**Autonomous background jobs for [Claude Code](https://claude.com/claude-code) — driven by text files and your own laptop.**
+> *Clip a ticket, it works the rail.*
+
+**Inbox & Orchestrate — autonomous background jobs for [Claude Code](https://claude.com/claude-code), driven by text files and your own laptop.**
 
 Drop a markdown file into a folder. A macOS `launchd` heartbeat picks it up, an AI harness runs it through structured phases, and the result lands in an archive. No servers, no dashboards in the cloud, no babysitting — just text files and the machine already on your desk.
 
@@ -173,7 +175,7 @@ A zero-dependency Node.js dashboard ships in [`monitor/`](monitor/):
 
 ```bash
 cd /path/to/my-project          # where .orchestrate/ lives
-node /path/to/inbox-orchestrate/monitor/server.js
+node /path/to/linecook/monitor/server.js
 # → http://127.0.0.1:7842
 ```
 
@@ -186,7 +188,7 @@ node /path/to/inbox-orchestrate/monitor/server.js
 ## Repository layout
 
 ```
-inbox-orchestrate/
+linecook/
 ├── README.md                  # this file
 ├── install.sh                 # standalone installer for any project
 ├── LICENSE
