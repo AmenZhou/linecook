@@ -284,7 +284,7 @@ Before writing `needs_human` and skipping a task with incomplete phases, check t
 
 1. **Deferral language in phase ACs:** Scan the failed/incomplete phase's `acceptance_criteria_met:` block and blockers field for markers: "deferred", "deferred to", "deferred — <team>", "not a blocker", "closed", "no action needed", "Forbidden", "out of scope". If **all** incomplete ACs contain explicit deferral or closure language → auto-resolvable.
 
-2. **Report file closure:** If the task file or any phase block references a file path (e.g. `reports/phase3/hrbaca_capacity_report.md`), read that file. If it contains a `**Closed:**`, `**Status:** ✅`, or `**dsp-service GO/NO-GO verdict:**` section → auto-resolvable.
+2. **Report file closure:** If the task file or any phase block references a file path (e.g. `reports/phase3/capacity_report.md`), read that file. If it contains a `**Closed:**`, `**Status:** ✅`, or `**service GO/NO-GO verdict:**` section → auto-resolvable.
 
 3. **Downstream task completion:** Scan project.md registry for any task whose summary or ID is referenced in this task's file (e.g. "superseded by", "closes with", "see also `<ID>`"). If the referenced task is `complete` → auto-resolvable.
 
@@ -993,7 +993,7 @@ To unload: `launchctl unload ~/Library/LaunchAgents/com.orchestrate.tend.plist`
 
 ```bash
 # New task
-/task-orchestrate "refactor auth in gjw-web-fe to use JWT"
+/task-orchestrate "refactor auth in the web frontend to use JWT"
 
 # Resume
 /task-orchestrate resume
@@ -1009,7 +1009,7 @@ cat > .orchestrate/inbox/rate-limit.md << 'EOF'
 Add per-IP rate limiting (100 req/min) to every route in src/routes/. Return 429 with Retry-After header on breach.
 
 ## Context
-No rate limiting exists today. The express app entry point is src/app.ts. We use express-rate-limit in ads_rate_limit already — same pattern applies here.
+No rate limiting exists today. The express app entry point is src/app.ts. We use express-rate-limit in a sibling service already — same pattern applies here.
 
 ## Acceptance Criteria
 - All routes return 429 after 100 req/min per IP

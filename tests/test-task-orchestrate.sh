@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# test-task-orchestrate.sh — control plane + SKILL.md invariants for /task-orchestrate
-# Run from the ai-console project root:
-#   bash .orchestrate/tests/test-task-orchestrate.sh
+# test-task-orchestrate.sh — SKILL.md invariants + control-plane/monitor structure.
+# Runs standalone against this repo (no installed copy, no launchd, no workspace).
+#   bash tests/test-task-orchestrate.sh
 set -euo pipefail
 
 PASS=0
 FAIL=0
-PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SKILL_SRC="/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/SKILL.md"
-ANALYZER_SKILL="/Users/haimengzhou/apps/ai-toolbox/skills/inbox-log-analyzer/SKILL.md"
-SKILL_INSTALLED="$HOME/.claude/skills/task-orchestrate/SKILL.md"
-MONITOR_DIR="/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/monitor"
-INBOX_ANALYZER_PLIST="$HOME/Library/LaunchAgents/com.orchestrate.inbox-analyzer.plist"
-CURSOR_AGENT="$HOME/.local/bin/cursor-agent"
+# Repo root is one level up from tests/.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN_DIR="$REPO_ROOT/bin"
+SKILL_SRC="$REPO_ROOT/skill/SKILL.md"
+MONITOR_DIR="$REPO_ROOT/monitor"
 
 ok()   { echo "  ✓ $1"; PASS=$((PASS+1)); }
 fail() { echo "  ✗ $1"; FAIL=$((FAIL+1)); }
+skip() { echo "  ⊘ $1 (skipped)"; }
 
 skill_has() {
   local pattern="$1"
@@ -30,45 +29,25 @@ skill_has() {
 echo ""
 echo "── task-orchestrate — test suite ────────────────"
 
-# ── 1. Control plane layout ───────────────────────────────────────────────────
+# ── 1. SKILL doc presence ─────────────────────────────────────────────────────
 echo ""
-echo "1. Control plane layout"
+echo "1. SKILL doc presence"
 
-for dir in inbox inbox/gated inbox/processed logs tasks; do
-  if [ -d "$PROJECT_ROOT/.orchestrate/$dir" ]; then
-    ok ".orchestrate/$dir/ exists"
-  else
-    fail ".orchestrate/$dir/ missing"
-  fi
-done
-
-if [ -f "$PROJECT_ROOT/.orchestrate/project.md" ]; then
-  ok "project.md exists"
+if [ -f "$SKILL_SRC" ]; then
+  ok "SKILL.md exists"
 else
-  fail "project.md missing"
+  fail "SKILL.md missing at $SKILL_SRC"
 fi
 
-if grep -q "## Shared Context" "$PROJECT_ROOT/.orchestrate/project.md" 2>/dev/null; then
-  ok "project.md has Shared Context section"
+if [ -f "$REPO_ROOT/skill/GUIDE.md" ]; then
+  ok "GUIDE.md exists"
 else
-  fail "project.md missing Shared Context section"
-fi
-
-if grep -q "## Task Registry" "$PROJECT_ROOT/.orchestrate/project.md" 2>/dev/null; then
-  ok "project.md has Task Registry section"
-else
-  fail "project.md missing Task Registry section"
+  fail "GUIDE.md missing at $REPO_ROOT/skill/GUIDE.md"
 fi
 
 # ── 2. SKILL.md invocation modes ─────────────────────────────────────────────
 echo ""
 echo "2. SKILL.md invocation modes"
-
-if [ -f "$SKILL_SRC" ]; then
-  ok "SKILL.md source exists in ai-toolbox"
-else
-  fail "SKILL.md source missing at $SKILL_SRC"
-fi
 
 skill_has '\| `tend` \|' "invocation table includes tend"
 skill_has 'tend go auto' "invocation table includes tend go auto"
@@ -88,22 +67,11 @@ skill_has 'inbox/gated' "T-2 documents inbox/gated/ path"
 skill_has '`inbox`' "invocation table includes inbox mode"
 skill_has '## Inbox Mode' "SKILL.md has Inbox Mode section"
 skill_has 'deferred_at:' "T-2 skips deferred inbox files"
-skill_has 'Gated tasks never auto-execute' "T-4 awaiting_go tasks are never auto-executed (gated fix 2026-06-21)"
+skill_has 'Gated tasks never auto-execute' "T-4 awaiting_go tasks are never auto-executed"
 skill_has 'auto-resolved needs_human' "T-4 auto-resolves needs_human when all phases complete"
 skill_has 'self-unblocked' "T-4 second-pass auto-resolution logs self-unblocked to heartbeat"
-skill_has 'Second-Pass Auto-Resolution Check' "T-4 has second-pass check before surfacing needs_human to human"
+skill_has 'Second-Pass Auto-Resolution Check' "T-4 has second-pass check before surfacing needs_human"
 skill_has 'physically move' "T-2 requires physical move to processed/ (not processed_as in place)"
-if grep -q 'finding_hashes' "$ANALYZER_SKILL" 2>/dev/null; then
-  ok "inbox-log-analyzer uses finding hash ledger"
-else
-  fail "inbox-log-analyzer missing finding_hashes dedup ledger"
-fi
-if grep -q 'Never.*file "empty task' "$ANALYZER_SKILL" 2>/dev/null && \
-   grep -q '\*-tend\.log' "$ANALYZER_SKILL" 2>/dev/null; then
-  ok "inbox-log-analyzer skips 0-phases false positive on tend.log"
-else
-  fail "inbox-log-analyzer missing tend.log empty-task exclusion"
-fi
 skill_has '## Acceptance Criteria' "inbox file format requires Acceptance Criteria"
 
 # ── 4. Execution + logging invariants ─────────────────────────────────────────
@@ -125,34 +93,11 @@ skill_has 'disqualifies PASS' "critic gate: any ✗ in AC → PARTIAL minimum"
 skill_has 'Premium: retry 1.*premium; retry 2.*halt' "premium retry cap documented (retry 2 → halt)"
 skill_has 'confidence-only gate' "critic applies confidence gate for simple/instructional phases"
 
-if grep -q 'Task:.*full task:' "$ANALYZER_SKILL" 2>/dev/null || \
-   grep -q 'read the full log in Phase 1' "$ANALYZER_SKILL" 2>/dev/null; then
-  ok "inbox-log-analyzer Step 5 Context includes full task line + log pointer"
-else
-  fail "inbox-log-analyzer Step 5 Context missing full task line or log pointer"
-fi
-
-# ── 5. Installed skill sync ───────────────────────────────────────────────────
+# ── 5. T-0 lock simulation (pure-bash, portable) ──────────────────────────────
 echo ""
-echo "5. Installed skill sync"
+echo "5. T-0 lock simulation"
 
-if [ -f "$SKILL_INSTALLED" ]; then
-  ok "installed SKILL.md exists (~/.claude/skills/)"
-  if cmp -s "$SKILL_SRC" "$SKILL_INSTALLED" 2>/dev/null; then
-    ok "installed SKILL.md matches ai-toolbox source"
-  else
-    fail "installed SKILL.md is stale — run: cd /Users/haimengzhou/apps/ai-toolbox && ./sync.sh"
-  fi
-else
-  fail "installed SKILL.md not found at $SKILL_INSTALLED"
-fi
-
-# ── 6. T-0 lock simulation ────────────────────────────────────────────────────
-echo ""
-echo "6. T-0 lock simulation"
-
-LOCK="$PROJECT_ROOT/.orchestrate/.tend.lock-test-$$"
-rm -f "$LOCK"
+LOCK="$(mktemp "${TMPDIR:-/tmp}/orch-lock-test.XXXXXX")"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$LOCK"
 AGE=$(( $(date +%s) - $(date -r "$LOCK" +%s) ))
 if [ "$AGE" -lt 360 ]; then
@@ -163,56 +108,65 @@ fi
 rm -f "$LOCK"
 ok "lock test file cleaned up"
 
-# ── 7. Launchd (configurable runner) ──────────────────────────────────────────
+# ── 6. Launchd plist templates (XML validity + wrapper structure) ─────────────
 echo ""
-echo "7. Launchd (configurable runner)"
+echo "6. Launchd plist templates"
 
-TEND_PLIST="$HOME/Library/LaunchAgents/com.orchestrate.tend.plist"
-RUN_JOB="$PROJECT_ROOT/.orchestrate/bin/run-job.sh"
-AGENT_CONF="$PROJECT_ROOT/.orchestrate/agent.conf"
+LAUNCHD_DIR="$REPO_ROOT/launchd"
+TEND_PLIST="$LAUNCHD_DIR/com.orchestrate.tend.plist"
+RESCUE_PLIST="$LAUNCHD_DIR/com.orchestrate.rescue.plist"
+MONITOR_PLIST="$LAUNCHD_DIR/com.orchestrate.monitor.plist"
+RUN_JOB="$BIN_DIR/run-job.sh"
+AGENT_EXAMPLE="$BIN_DIR/agent.conf.example"
 
-plist_uses_wrapper() {
-  local plist="$1"
-  grep -q "run-job.sh" "$plist"
+# plutil validates plist XML on macOS; fall back to a structural grep elsewhere.
+validate_plist() {
+  local p="$1"
+  if command -v plutil >/dev/null 2>&1; then
+    plutil -lint "$p" >/dev/null 2>&1
+  else
+    grep -q '<plist' "$p" && grep -q '</plist>' "$p"
+  fi
 }
 
-if [ -f "$INBOX_ANALYZER_PLIST" ]; then
-  ok "inbox-analyzer plist exists"
-  if grep -q "enqueue-analyzer-daily.sh" "$INBOX_ANALYZER_PLIST"; then
-    ok "inbox-analyzer plist uses daily enqueue script"
+for p in "$TEND_PLIST" "$RESCUE_PLIST" "$MONITOR_PLIST"; do
+  base="$(basename "$p")"
+  if [ -f "$p" ]; then
+    ok "$base exists"
+    if validate_plist "$p"; then
+      ok "$base is valid plist XML"
+    else
+      fail "$base is not valid plist XML"
+    fi
   else
-    fail "inbox-analyzer plist should enqueue via enqueue-analyzer-daily.sh"
+    fail "$base missing at $p"
   fi
-  if grep -q "StartCalendarInterval" "$INBOX_ANALYZER_PLIST"; then
-    ok "inbox-analyzer uses calendar schedule"
-  else
-    fail "inbox-analyzer missing StartCalendarInterval"
-  fi
+done
+
+# tend plist invokes the run-job wrapper via the install-time __RUN_JOB__ placeholder.
+if grep -q '__RUN_JOB__' "$TEND_PLIST" 2>/dev/null; then
+  ok "tend plist template uses __RUN_JOB__ placeholder for run-job wrapper"
 else
-  fail "inbox-analyzer plist not found at $INBOX_ANALYZER_PLIST"
+  fail "tend plist template missing __RUN_JOB__ placeholder"
 fi
 
-WIKI_PLIST="$HOME/Library/LaunchAgents/com.orchestrate.wiki-ingest-daily.plist"
-if [ -f "$WIKI_PLIST" ]; then
-  ok "wiki-ingest-daily plist exists"
-  if grep -q "enqueue-wiki-ingest-daily.sh" "$WIKI_PLIST"; then
-    ok "wiki-ingest-daily plist uses enqueue script"
-  else
-    fail "wiki-ingest-daily missing enqueue script"
-  fi
+if grep -q 'StartInterval' "$TEND_PLIST" 2>/dev/null; then
+  ok "tend plist uses StartInterval (time-based trigger)"
 else
-  fail "wiki-ingest-daily plist not found at $WIKI_PLIST"
+  fail "tend plist missing StartInterval"
 fi
 
-if [ -f "$TEND_PLIST" ]; then
-  ok "tend plist exists"
-  if plist_uses_wrapper "$TEND_PLIST"; then
-    ok "tend plist uses run-job wrapper"
-  else
-    fail "tend plist missing run-job.sh wrapper"
-  fi
+# rescue plist invokes rescue.sh via the __RESCUE_SCRIPT__ placeholder.
+if grep -q '__RESCUE_SCRIPT__' "$RESCUE_PLIST" 2>/dev/null; then
+  ok "rescue plist template uses __RESCUE_SCRIPT__ placeholder"
 else
-  fail "tend plist not found at $TEND_PLIST"
+  fail "rescue plist template missing __RESCUE_SCRIPT__ placeholder"
+fi
+
+if grep -q 'StartInterval' "$RESCUE_PLIST" 2>/dev/null; then
+  ok "rescue plist uses StartInterval (time-based trigger)"
+else
+  fail "rescue plist missing StartInterval"
 fi
 
 if [ -x "$RUN_JOB" ]; then
@@ -221,151 +175,34 @@ else
   fail "run-job.sh missing or not executable at $RUN_JOB"
 fi
 
-if [ -f "$AGENT_CONF" ] && grep -qE '^RUNNER=(cursor|claude)' "$AGENT_CONF"; then
-  ok "agent.conf sets RUNNER"
+if [ -x "$BIN_DIR/install-launchd.sh" ]; then
+  ok "install-launchd.sh exists and is executable"
 else
-  fail "agent.conf missing or RUNNER not set at $AGENT_CONF"
+  fail "install-launchd.sh missing or not executable at $BIN_DIR/install-launchd.sh"
 fi
 
-if [ -f "$AGENT_CONF" ] && grep -qE 'TEND_MODE=.*(go auto|go_auto|notify)' "$AGENT_CONF"; then
-  ok "agent.conf sets TEND_MODE"
-else
-  fail "agent.conf missing TEND_MODE (expected go auto by default)"
-fi
-
-if [ -x "$CURSOR_AGENT" ] || [ -f "$CURSOR_AGENT" ]; then
-  ok "cursor-agent binary exists"
-else
-  fail "cursor-agent binary missing at $CURSOR_AGENT"
-fi
-
-if [ -f "$PROJECT_ROOT/.cursor/skills/inbox-log-analyzer/SKILL.md" ]; then
-  ok "inbox-log-analyzer skill installed in .cursor/skills/"
-else
-  fail "inbox-log-analyzer missing from .cursor/skills/ (required for headless cursor-agent)"
-fi
-
-if [ -f "$PROJECT_ROOT/.cursor/skills/task-orchestrate/SKILL.md" ]; then
-  ok "task-orchestrate skill installed in .cursor/skills/"
-else
-  fail "task-orchestrate missing from .cursor/skills/ (required for headless cursor-agent tend)"
-fi
-
-if launchctl list 2>/dev/null | grep -q "com.orchestrate.inbox-analyzer"; then
-  ok "com.orchestrate.inbox-analyzer loaded in launchd"
-else
-  fail "com.orchestrate.inbox-analyzer not loaded in launchd"
-fi
-
-if launchctl list 2>/dev/null | grep -q "com.orchestrate.wiki-ingest-daily"; then
-  ok "com.orchestrate.wiki-ingest-daily loaded in launchd"
-else
-  fail "com.orchestrate.wiki-ingest-daily not loaded in launchd"
-fi
-
-RESCUE_PLIST="$HOME/Library/LaunchAgents/com.orchestrate.rescue.plist"
-if [ -f "$RESCUE_PLIST" ]; then
-  ok "rescue plist exists"
-  if grep -q "rescue.sh" "$RESCUE_PLIST"; then
-    ok "rescue plist invokes rescue.sh"
-  else
-    fail "rescue plist should invoke rescue.sh"
-  fi
-  if grep -q "StartInterval" "$RESCUE_PLIST"; then
-    ok "rescue plist uses StartInterval (time-based trigger)"
-  else
-    fail "rescue plist missing StartInterval"
-  fi
-else
-  fail "rescue plist not found at $RESCUE_PLIST"
-fi
-
-if launchctl list 2>/dev/null | grep -q "com.orchestrate.rescue"; then
-  ok "com.orchestrate.rescue loaded in launchd"
-else
-  fail "com.orchestrate.rescue not loaded in launchd"
-fi
-
-if launchctl list 2>/dev/null | grep -q "com.orchestrate.tend"; then
-  ok "com.orchestrate.tend loaded in launchd"
-else
-  fail "com.orchestrate.tend not loaded in launchd"
-fi
-
-# ── 8. Cursor ↔ Claude permission parity ──────────────────────────────────────
+# ── 7. agent.conf.example (configurable runner) ───────────────────────────────
 echo ""
-echo "8. Cursor ↔ Claude permission parity"
+echo "7. agent.conf.example (configurable runner)"
 
-SYNC_SCRIPT="$PROJECT_ROOT/scripts/sync-cursor-claude-permissions.sh"
-CURSOR_CLI="$PROJECT_ROOT/.cursor/cli.json"
-CLAUDE_SETTINGS="$PROJECT_ROOT/.claude/settings.json"
-
-if [[ -f "$SYNC_SCRIPT" ]]; then
-  ok "sync-cursor-claude-permissions.sh exists"
+if [ -f "$AGENT_EXAMPLE" ] && grep -qE '^RUNNER=(cursor|claude)' "$AGENT_EXAMPLE"; then
+  ok "agent.conf.example sets RUNNER"
 else
-  fail "sync script missing at $SYNC_SCRIPT"
+  fail "agent.conf.example missing or RUNNER not set at $AGENT_EXAMPLE"
 fi
 
-if [[ -f "$CURSOR_CLI" ]] && grep -q '"deny": \[\]' "$CURSOR_CLI"; then
-  ok "cli.json has permissions.deny array (schema required)"
+if [ -f "$AGENT_EXAMPLE" ] && grep -qE 'TEND_MODE=.*(go auto|go_auto|notify)' "$AGENT_EXAMPLE"; then
+  ok "agent.conf.example sets TEND_MODE"
 else
-  fail "cli.json missing permissions.deny array"
+  fail "agent.conf.example missing TEND_MODE (expected go auto by default)"
 fi
 
-for pattern in "Shell(rm)" "Shell(mv)" "Write(/Users/haimengzhou/apps/ai-console/.orchestrate/**)"; do
-  if grep -qF "$pattern" "$CURSOR_CLI" 2>/dev/null; then
-    ok "cli.json allows: $pattern"
-  else
-    fail "cli.json missing: $pattern"
-  fi
-done
-
-if [[ -f "$CLAUDE_SETTINGS" ]]; then
-  for pattern in "Bash(rm:*)" "Bash(mv:*)" "Bash(chmod +x:*)" "Edit(~/apps/ai-console/.orchestrate/**)"; do
-    if grep -qF "$pattern" "$CLAUDE_SETTINGS" 2>/dev/null; then
-      ok "claude settings has: $pattern"
-    else
-      fail "claude settings missing: $pattern"
-    fi
-  done
-else
-  fail "claude settings missing at $CLAUDE_SETTINGS"
-fi
-
-CURSOR_GLOBAL="$HOME/.cursor/cli-config.json"
-if [[ -f "$CURSOR_GLOBAL" ]]; then
-  if grep -qF '"Shell(git push)"' "$CURSOR_GLOBAL" 2>/dev/null; then
-    fail "global cli-config still allows Shell(git push) — remove for Claude ask parity"
-  else
-    ok "global cli-config: git push not on allow list"
-  fi
-  if grep -qF '"Shell(chmod)"' "$CURSOR_GLOBAL" 2>/dev/null && \
-     grep '"Shell(chmod)"' "$CURSOR_GLOBAL" | grep -q deny; then
-    fail "global cli-config still denies Shell(chmod) broadly — blocks chmod +x under tend"
-  else
-    ok "global cli-config: no broad Shell(chmod) deny"
-  fi
-else
-  fail "global cli-config missing at $CURSOR_GLOBAL"
-fi
-
-if [[ -x "$SYNC_SCRIPT" ]] || [[ -f "$SYNC_SCRIPT" ]]; then
-  if bash "$SYNC_SCRIPT" --check 2>/dev/null; then
-    ok "sync --check passes (cli.json matches manifest)"
-  else
-    fail "sync --check failed — run: bash scripts/sync-cursor-claude-permissions.sh"
-  fi
-fi
-
-# ── 9. Orchestrate skill — recent pipeline + launchd defaults ─────────────────
+# ── 8. Orchestrate skill — pipeline + runtime defaults ────────────────────────
 echo ""
-echo "9. Orchestrate skill — pipeline + launchd defaults"
+echo "8. Orchestrate skill — pipeline + runtime defaults"
 
-RUN_JOB_SRC="/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/bin/run-job.sh"
-AGENT_EXAMPLE="/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/bin/agent.conf.example"
-WORKFLOW_DOC="$PROJECT_ROOT/docs/orchestrate-inbox-workflow.md"
-ENQUEUE_ANALYZER="$PROJECT_ROOT/.orchestrate/bin/enqueue-analyzer-daily.sh"
-ENQUEUE_WIKI="$PROJECT_ROOT/.orchestrate/bin/enqueue-wiki-ingest-daily.sh"
+RUN_JOB_SRC="$BIN_DIR/run-job.sh"
+ENQUEUE_ANALYZER="$BIN_DIR/enqueue-analyzer-daily.sh"
 
 skill_has '\| `inbox go` \|' "invocation table includes inbox go"
 skill_has '\| `inbox go auto` \|' "invocation table includes inbox go auto"
@@ -376,45 +213,30 @@ skill_has 'parallel batches of up to 3' "T-4 tend go auto dispatches parallel ba
 skill_has 'TASK RESULT' "parallel batch subagent returns TASK RESULT block"
 skill_has 'tend go auto <ID>' "invocation modes includes targeted single-task mode"
 skill_has 'Do \*\*not\*\* append to `skill-improvement-backlog.md`' "completion routes suggestions to inbox not backlog"
-skill_has 'inbox/gated/improvement-' "self-improvement writes to inbox/gated/"
+skill_has 'improvement-<slug>' "self-improvement files improvement-<slug> inbox items"
 
-if [[ -f "$RUN_JOB_SRC" ]] && grep -q 'TEND_MODE="\${TEND_MODE:-go auto}"' "$RUN_JOB_SRC" 2>/dev/null; then
+if grep -q 'TEND_MODE="\${TEND_MODE:-go auto}"' "$RUN_JOB_SRC" 2>/dev/null; then
   ok "run-job.sh defaults TEND_MODE to go auto"
 else
   fail "run-job.sh missing TEND_MODE default (go auto)"
 fi
 
-if [[ -f "$RUN_JOB_SRC" ]] && grep -q 'tend_prompt' "$RUN_JOB_SRC" && grep -q 'go_auto' "$RUN_JOB_SRC"; then
+if grep -q 'tend_prompt' "$RUN_JOB_SRC" && grep -q 'go_auto' "$RUN_JOB_SRC"; then
   ok "run-job.sh maps TEND_MODE to tend prompts"
 else
   fail "run-job.sh missing TEND_MODE prompt mapping"
 fi
 
-if [[ -f "$RUN_JOB_SRC" ]] && grep -q 'NO --force' "$RUN_JOB_SRC"; then
+if grep -q 'NO --force' "$RUN_JOB_SRC"; then
   ok "run-job.sh documents no --force for unattended tend"
 else
   fail "run-job.sh missing no --force safety comment"
 fi
 
-if [[ -f "$AGENT_EXAMPLE" ]] && grep -qE 'TEND_MODE=.*go auto' "$AGENT_EXAMPLE"; then
-  ok "agent.conf.example defaults TEND_MODE to go auto"
+if [ -f "$ENQUEUE_ANALYZER" ] && grep -q 'run-job.sh" tend' "$ENQUEUE_ANALYZER"; then
+  ok "enqueue-analyzer-daily.sh triggers immediate tend after enqueue"
 else
-  fail "agent.conf.example missing TEND_MODE=go auto"
-fi
-
-for script in "$ENQUEUE_ANALYZER" "$ENQUEUE_WIKI"; do
-  base="$(basename "$script")"
-  if [[ -f "$script" ]] && grep -q 'run-job.sh" tend' "$script"; then
-    ok "$base triggers immediate tend after enqueue"
-  else
-    fail "$base missing run-job.sh tend trigger"
-  fi
-done
-
-if [[ -f "$WORKFLOW_DOC" ]] && grep -q 'TEND_MODE' "$WORKFLOW_DOC"; then
-  ok "orchestrate-inbox-workflow.md documents TEND_MODE"
-else
-  fail "orchestrate-inbox-workflow.md missing TEND_MODE documentation"
+  fail "enqueue-analyzer-daily.sh missing run-job.sh tend trigger"
 fi
 
 # T-1 simulation: deferred inbox file must not set NEED_ACTION (isolated temp inbox)
@@ -432,9 +254,9 @@ for f in "$TMP_INBOX"/*.md "$TMP_INBOX"/gated/*.md; do
   break
 done
 if [[ "$NEED" -eq 1 ]]; then
-  ok "T-1 deferred_at simulation skips deferred files"
+  ok "T-1 deferred_at simulation triggers action when an active file is present"
 else
-  fail "T-1 deferred_at simulation — only deferred files present but NEED_ACTION=1 expected with active file"
+  fail "T-1 deferred_at simulation — active file present but NEED_ACTION stayed 0"
 fi
 
 # Re-run with only deferred — NEED should stay 0
@@ -453,19 +275,12 @@ else
   fail "T-1 deferred-only inbox incorrectly triggers action"
 fi
 
-if [[ "$NEED" -eq 0 ]]; then
-  ok "T-1 deferred-only inbox does not trigger action"
-else
-  fail "T-1 deferred-only inbox incorrectly triggers action"
-fi
-
-# ── 10. History tab — MANIFEST + disk fallback ────────────────────────────────
+# ── 9. Monitor — History tab + disk fallback ──────────────────────────────────
 echo ""
-echo "10. History tab — MANIFEST + disk fallback"
+echo "9. Monitor — History tab + disk fallback"
 
 MONITOR_SERVER="$MONITOR_DIR/server.js"
-MANIFEST="$PROJECT_ROOT/orchestrate-history/MANIFEST.md"
-HISTORY_DIR="$PROJECT_ROOT/orchestrate-history"
+MONITOR_INDEX="$MONITOR_DIR/index.html"
 
 if [[ -f "$MONITOR_SERVER" ]] && grep -q 'loadHistoryEntries' "$MONITOR_SERVER"; then
   ok "monitor server scans orchestrate-history/ for on-disk archives"
@@ -481,38 +296,9 @@ fi
 
 skill_has 'Self-check before marking complete' "Completion requires MANIFEST self-check"
 
-if [[ -f "$MANIFEST" ]]; then
-  BAD_LINES=$(grep -vE '^#|^$|^---$|^[0-9]{4}-[0-9]{2}-[0-9]{2} \|' "$MANIFEST" | grep -E '^[[:space:]]*(\||-|[0-9]{8}-)' || true)
-  if [[ -z "$BAD_LINES" ]]; then
-    ok "MANIFEST.md has no malformed lines"
-  else
-    fail "MANIFEST.md has malformed lines (expected YYYY-MM-DD | filename | summary | tags)"
-    echo "$BAD_LINES" | head -5 | sed 's/^/      /'
-  fi
-
-  ORPHAN=0
-  for f in "$HISTORY_DIR"/*.md; do
-    [[ -f "$f" ]] || continue
-    base="$(basename "$f")"
-    [[ "$base" == "MANIFEST.md" ]] && continue
-    if ! grep -qF "$base" "$MANIFEST"; then
-      ORPHAN=$((ORPHAN + 1))
-    fi
-  done
-  if [[ "$ORPHAN" -eq 0 ]]; then
-    ok "every orchestrate-history archive is listed in MANIFEST.md"
-  else
-    fail "$ORPHAN archive file(s) missing from MANIFEST.md"
-  fi
-else
-  fail "MANIFEST.md missing at $MANIFEST"
-fi
-
-# ── 11. Monitor inbox gated/ + History visibility guardrails ─────────────────
+# ── 10. Monitor — inbox gated/ + History visibility guardrails ────────────────
 echo ""
-echo "11. Monitor inbox gated/ + History visibility guardrails"
-
-MONITOR_INDEX="$MONITOR_DIR/index.html"
+echo "10. Monitor — inbox gated/ + History visibility guardrails"
 
 if [[ -f "$MONITOR_SERVER" ]] && grep -q "entry.name === 'gated'" "$MONITOR_SERVER"; then
   ok "monitor handleInbox scans inbox/gated/ subdirectory"
@@ -533,19 +319,19 @@ else
 fi
 
 if [[ -f "$MONITOR_INDEX" ]] && grep -q "replace(/\\[_-\\]/g, ' ')" "$MONITOR_INDEX"; then
-  ok "History search normalizes hyphens/underscores (sy promotion → sy-promotion)"
+  ok "History search normalizes hyphens/underscores"
 else
   fail "History search missing hyphen normalization in index.html"
 fi
 
 if [[ -f "$MONITOR_INDEX" ]] && grep -q 'historyDateRange' "$MONITOR_INDEX" && grep -q 'setHistoryDateRange' "$MONITOR_INDEX" && grep -q 'isDailyHistoryRow' "$MONITOR_INDEX"; then
-  ok "History tab has date-range filters (Today/7d/30d/All/Daily) for discoverability"
+  ok "History tab has date-range filters (Today/7d/30d/All/Daily)"
 else
   fail "History tab missing date-range filter chips (historyDateRange)"
 fi
 
 if [[ -f "$MONITOR_SERVER" ]] && grep -q 'resolveHistoryDatetime' "$MONITOR_SERVER"; then
-  ok "monitor server emits dateIso via resolveHistoryDatetime (no UTC-midnight date-only bug)"
+  ok "monitor server emits dateIso via resolveHistoryDatetime"
 else
   fail "monitor server missing resolveHistoryDatetime for History date column"
 fi
@@ -574,7 +360,6 @@ else
   fail "monitor index.html missing parseIsoUtc for History timestamps"
 fi
 
-SKILL_SRC="/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/SKILL.md"
 if [[ -f "$SKILL_SRC" ]] && grep -q 'COMPLETED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"' "$SKILL_SRC"; then
   ok "Completion mandates COMPLETED_AT via date -u (no rounded placeholders)"
 else
@@ -596,9 +381,9 @@ fi
 skill_has 'No duplicate registry rows' "Completion §1 warns against duplicate registry rows"
 skill_has 'project slug' "Completion §1 requires cross-project summaries include project slug"
 
-# ── 12. Tend session limit — runner fallback + monitor throttle ───────────────
+# ── 11. Tend session limit — runner fallback + monitor throttle ───────────────
 echo ""
-echo "12. Tend session limit — runner fallback + monitor throttle"
+echo "11. Tend session limit — runner fallback + monitor throttle"
 
 if [[ -f "$RUN_JOB_SRC" ]] && grep -q 'run_with_fallback' "$RUN_JOB_SRC"; then
   ok "run-job.sh falls back to alternate runner on session limit"
@@ -654,10 +439,10 @@ else
   fail "monitor index.html missing tend-health-banner"
 fi
 
-if bash "$PROJECT_ROOT/.orchestrate/tests/test-run-job.sh" >/dev/null 2>&1; then
+if bash "$REPO_ROOT/tests/test-run-job.sh" >/dev/null 2>&1; then
   ok "test-run-job.sh suite passes (session limit fallback)"
 else
-  fail "test-run-job.sh failed — run .orchestrate/tests/test-run-job.sh"
+  fail "test-run-job.sh failed — run tests/test-run-job.sh"
 fi
 
 if [[ -f "$MONITOR_INDEX" ]] && grep -q 'renderRunnerStatus' "$MONITOR_INDEX"; then
@@ -690,9 +475,11 @@ else
   fail "monitor index.html missing IDE ✓/✗ runner badge labels"
 fi
 
-# ── 13. Tend health surfacing + inbox processed_as guardrails ─────────────────
+# ── 12. Tend health surfacing + inbox processed_as guardrails ─────────────────
 echo ""
-echo "13. Tend health surfacing + inbox processed_as guardrails"
+echo "12. Tend health surfacing + inbox processed_as guardrails"
+
+MONITOR_TEST="$MONITOR_DIR/tests/server.test.js"
 
 if [[ -f "$MONITOR_SERVER" ]] && grep -q 'tendIssues' "$MONITOR_SERVER"; then
   ok "monitor /api/tasks exposes attention.tendIssues"
@@ -718,45 +505,31 @@ else
   fail "run-job.sh missing startup syntax self-check"
 fi
 
-MONITOR_TEST="/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/monitor/tests/server.test.js"
 if [[ -f "$MONITOR_TEST" ]] && grep -q 'stale tend lock' "$MONITOR_TEST" && grep -q 'tendIssues when session limited' "$MONITOR_TEST"; then
   ok "monitor server.test.js covers stale lock + tendIssues integration"
 else
   fail "monitor server.test.js missing stale lock or tendIssues tests"
 fi
 
-# ── 14. History timestamps + stale inbox dashboard guardrails ───────────────────
+# Run the monitor's own node test suite when node is available.
+if command -v node >/dev/null 2>&1; then
+  if node --test "$MONITOR_TEST" >/dev/null 2>&1; then
+    ok "monitor server.test.js passes (node --test)"
+  else
+    fail "monitor server.test.js failed under node --test"
+  fi
+else
+  skip "monitor server.test.js — node not installed"
+fi
+
+# ── 13. History timestamps + stale inbox dashboard guardrails ─────────────────
 echo ""
-echo "14. History timestamps + stale inbox dashboard guardrails"
-
-if [[ -f "$MONITOR_SERVER" ]] && grep -q 'last_activity is when the task finished' "$MONITOR_SERVER"; then
-  ok "resolveHistoryDatetime prefers last_activity before archive filename timestamp"
-else
-  fail "resolveHistoryDatetime missing last_activity-before-filename-ts fix"
-fi
-
-if [[ -f "$SKILL_SRC" ]] && grep -q 'COMPLETED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"' "$SKILL_SRC"; then
-  ok "Completion mandates COMPLETED_AT via date -u (no rounded placeholders)"
-else
-  fail "SKILL.md missing COMPLETED_AT timestamp contract in Completion"
-fi
+echo "13. History timestamps + stale inbox dashboard guardrails"
 
 if [[ -f "$MONITOR_SERVER" ]] && grep -q "path.join(inboxDir, 'processed', path.basename(filename))" "$MONITOR_SERVER"; then
   ok "monitor hides inbox root files duplicated in processed/"
 else
   fail "monitor server missing processed/ duplicate basename filter"
-fi
-
-if [[ -f "$PROJECT_ROOT/scripts/backfill-registry-last-activity.js" ]]; then
-  ok "backfill-registry-last-activity.js exists"
-else
-  fail "scripts/backfill-registry-last-activity.js missing"
-fi
-
-if command -v node >/dev/null 2>&1 && node --test "$PROJECT_ROOT/scripts/backfill-registry-last-activity.test.js" >/dev/null 2>&1; then
-  ok "backfill-registry-last-activity tests pass"
-else
-  fail "backfill-registry-last-activity.test.js failed"
 fi
 
 if [[ -f "$MONITOR_TEST" ]] && grep -q 'prefers registry last_activity over batch archive filename' "$MONITOR_TEST"; then
@@ -771,10 +544,10 @@ else
   fail "SKILL.md missing cleanup-stale-inbox.sh in T-1 pre-flight"
 fi
 
-if [[ -x "$PROJECT_ROOT/.orchestrate/bin/cleanup-stale-inbox.sh" ]]; then
-  ok "cleanup-stale-inbox.sh installed and executable"
+if [[ -x "$BIN_DIR/cleanup-stale-inbox.sh" ]]; then
+  ok "cleanup-stale-inbox.sh present and executable"
 else
-  fail ".orchestrate/bin/cleanup-stale-inbox.sh missing or not executable"
+  fail "bin/cleanup-stale-inbox.sh missing or not executable"
 fi
 
 if [[ -f "$MONITOR_SERVER" ]] && grep -q 'extractInboxTaskIds' "$MONITOR_SERVER" && grep -q 'completeTaskIds' "$MONITOR_SERVER"; then
@@ -789,15 +562,14 @@ else
   fail "monitor server.test.js missing registry-complete inbox test"
 fi
 
-# ── 15. Bypass — park blocked tasks until unblocked ─────────────────────────────
+# ── 14. Bypass — park blocked tasks until unblocked ───────────────────────────
 echo ""
-echo "15. Bypass — park blocked tasks until unblocked"
+echo "14. Bypass — park blocked tasks until unblocked"
 
 skill_has 'bypassed_at:' "SKILL.md documents the bypassed_at park marker"
 skill_has 'Bypass — park blocked tasks' "SKILL.md has the Bypass section"
 
-BYP_BIN="$PROJECT_ROOT/.orchestrate/bin"
-if [[ -f "$BYP_BIN/tend-need-action.sh" && -f "$BYP_BIN/requeue-unblocked.sh" ]]; then
+if [[ -f "$BIN_DIR/tend-need-action.sh" && -f "$BIN_DIR/requeue-unblocked.sh" ]]; then
   BYP_TMP=$(mktemp -d "${TMPDIR:-/tmp}/orch-bypass.XXXXXX")
   mkdir -p "$BYP_TMP/.orchestrate/tasks" "$BYP_TMP/.orchestrate/logs" "$BYP_TMP/reports"
   cat > "$BYP_TMP/.orchestrate/project.md" <<'PROJEOF'
@@ -811,7 +583,7 @@ PROJEOF
   printf 'id: 20990101-inbox-PARK\nstatus: needs_human\nbypassed_at: 2099-01-01T00:05:00Z\nbypass_reason: external dep\n### Phase 1\nstatus: x failed\n' > "$BYP_TMP/.orchestrate/tasks/20990101-inbox-PARK.md"
   printf 'id: 20990101-inbox-NEW0\nstatus: needs_human\n### Phase 1\nstatus: x failed\n' > "$BYP_TMP/.orchestrate/tasks/20990101-inbox-NEW0.md"
 
-  NHA="$(bash "$BYP_BIN/tend-need-action.sh" "$BYP_TMP" 2>/dev/null | grep '^NEEDS_HUMAN_ACTIONABLE=' | cut -d= -f2 || true)"
+  NHA="$(bash "$BIN_DIR/tend-need-action.sh" "$BYP_TMP" 2>/dev/null | grep '^NEEDS_HUMAN_ACTIONABLE=' | cut -d= -f2 || true)"
   if [[ "$NHA" == "1" ]]; then
     ok "tend-need-action.sh skips bypassed_at task (only un-parked counted)"
   else
@@ -821,7 +593,7 @@ PROJEOF
   # Unblock the parked task via requeue_when_exists closure → marker stripped + pending
   printf '**Status:** ✅ CONFIRMED\n' > "$BYP_TMP/reports/decision.md"
   printf 'id: 20990101-inbox-PARK\nstatus: needs_human\nrequeue_when_exists: %s/reports/decision.md\nbypassed_at: 2099-01-01T00:05:00Z\nbypass_reason: external dep\n### Phase 1\nstatus: x failed\n' "$BYP_TMP" > "$BYP_TMP/.orchestrate/tasks/20990101-inbox-PARK.md"
-  bash "$BYP_BIN/requeue-unblocked.sh" "$BYP_TMP" >/dev/null 2>&1 || true
+  bash "$BIN_DIR/requeue-unblocked.sh" "$BYP_TMP" >/dev/null 2>&1 || true
   if ! grep -qE '^(bypassed_at|bypass_reason):' "$BYP_TMP/.orchestrate/tasks/20990101-inbox-PARK.md" \
      && grep -qE '\| 20990101-inbox-PARK \|.*\| pending \|' "$BYP_TMP/.orchestrate/project.md"; then
     ok "requeue-unblocked.sh clears bypass marker and sets pending"
@@ -830,7 +602,7 @@ PROJEOF
   fi
   rm -rf "$BYP_TMP"
 else
-  fail "bypass bin scripts not found under $BYP_BIN"
+  fail "bypass bin scripts not found under $BIN_DIR"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# test-run-job.sh — unit tests for .orchestrate/bin/run-job.sh dispatch logic
+# test-run-job.sh — unit tests for bin/run-job.sh dispatch logic
 # Uses mock cursor/claude binaries; does not invoke real agents.
 set -euo pipefail
 
 PASS=0
 FAIL=0
-PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RUN_JOB_SRC="${RUN_JOB_SRC:-/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/bin/run-job.sh}"
-RUN_JOB="${RUN_JOB:-$PROJECT_ROOT/.orchestrate/bin/run-job.sh}"
+# Repo root is one level up from tests/ — resolve it robustly so the suite runs
+# standalone from anywhere.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN_DIR="$REPO_ROOT/bin"
+# Source and runtime run-job.sh are the same file in this repo (no separate
+# installed copy); both vars stay overridable for ad-hoc testing.
+RUN_JOB_SRC="${RUN_JOB_SRC:-$REPO_ROOT/bin/run-job.sh}"
+RUN_JOB="${RUN_JOB:-$REPO_ROOT/bin/run-job.sh}"
 
 ok()   { echo "  ✓ $1"; PASS=$((PASS+1)); }
 fail() { echo "  ✗ $1"; FAIL=$((FAIL+1)); }
@@ -117,13 +122,7 @@ else
   exit 1
 fi
 
-if [[ -f "$RUN_JOB_SRC" ]] && cmp -s "$RUN_JOB_SRC" "$RUN_JOB" 2>/dev/null; then
-  ok "installed run-job.sh matches ai-toolbox source"
-elif [[ -f "$RUN_JOB_SRC" ]]; then
-  fail "installed run-job.sh stale — run install-launchd.sh"
-fi
-
-if grep -q 'cleanup_stale_inbox' "$RUN_JOB" && [[ -x "$PROJECT_ROOT/.orchestrate/bin/cleanup-stale-inbox.sh" ]]; then
+if grep -q 'cleanup_stale_inbox' "$RUN_JOB" && [[ -x "$BIN_DIR/cleanup-stale-inbox.sh" ]]; then
   ok "run-job.sh invokes cleanup-stale-inbox.sh before tend"
 else
   fail "run-job.sh missing cleanup_stale_inbox hook or cleanup script not executable"
@@ -365,17 +364,12 @@ assert_exit_fail "not-a-job" "unknown job rejected"
 
 echo ""
 echo "5b. run-job.sh syntax self-check"
-if bash -n "$RUN_JOB_SRC" 2>/dev/null; then
-  ok "ai-toolbox run-job.sh bash syntax valid"
-else
-  fail "ai-toolbox run-job.sh has bash syntax errors"
-fi
 if bash -n "$RUN_JOB" 2>/dev/null; then
-  ok "installed run-job.sh bash syntax valid"
+  ok "run-job.sh bash syntax valid"
 else
-  fail "installed run-job.sh has bash syntax errors"
+  fail "run-job.sh has bash syntax errors"
 fi
-if grep -q 'bash -n.*BASH_SOURCE' "$RUN_JOB_SRC" 2>/dev/null; then
+if grep -q 'bash -n.*BASH_SOURCE' "$RUN_JOB" 2>/dev/null; then
   ok "run-job.sh self-validates syntax at startup"
 else
   fail "run-job.sh missing startup syntax self-check"
@@ -383,7 +377,7 @@ fi
 
 echo ""
 echo "6. install-launchd.sh source"
-INSTALL="/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/bin/install-launchd.sh"
+INSTALL="$REPO_ROOT/bin/install-launchd.sh"
 if [[ -f "$INSTALL" ]]; then
   ok "install-launchd.sh exists"
   if bash -n "$INSTALL" 2>/dev/null; then
@@ -395,7 +389,7 @@ else
   fail "install-launchd.sh missing at $INSTALL"
 fi
 
-TEND_PLIST="/Users/haimengzhou/apps/ai-toolbox/skills/task-orchestrate/com.orchestrate.tend.plist"
+TEND_PLIST="$REPO_ROOT/launchd/com.orchestrate.tend.plist"
 if grep -q '__RUN_JOB__' "$TEND_PLIST" 2>/dev/null; then
   ok "tend plist template uses __RUN_JOB__ placeholder"
 else
@@ -408,7 +402,7 @@ setup_idle_work() {
   IDLE_WORK="$TMP/idle-work"
   mkdir -p "$IDLE_WORK/.orchestrate/inbox/gated" "$IDLE_WORK/.orchestrate/inbox/processed" \
     "$IDLE_WORK/.orchestrate/logs" "$IDLE_WORK/.orchestrate/bin"
-  cp "$PROJECT_ROOT/.orchestrate/bin/"{run-job.sh,drain-inbox.sh,tend-need-action.sh,cleanup-stale-inbox.sh} \
+  cp "$BIN_DIR/"{run-job.sh,drain-inbox.sh,tend-need-action.sh,cleanup-stale-inbox.sh} \
     "$IDLE_WORK/.orchestrate/bin/"
   chmod +x "$IDLE_WORK/.orchestrate/bin/"*.sh
   cat > "$IDLE_WORK/.orchestrate/project.md" << 'EOF'
@@ -458,7 +452,7 @@ echo "8. tend_need_action pipefail guard — pending task MUST dispatch agent"
 ACTIVE_WORK="$TMP/active-work"
 mkdir -p "$ACTIVE_WORK/.orchestrate/inbox/gated" "$ACTIVE_WORK/.orchestrate/inbox/processed" \
   "$ACTIVE_WORK/.orchestrate/logs" "$ACTIVE_WORK/.orchestrate/bin"
-cp "$PROJECT_ROOT/.orchestrate/bin/"{run-job.sh,drain-inbox.sh,tend-need-action.sh,cleanup-stale-inbox.sh} \
+cp "$BIN_DIR/"{run-job.sh,drain-inbox.sh,tend-need-action.sh,cleanup-stale-inbox.sh} \
   "$ACTIVE_WORK/.orchestrate/bin/"
 chmod +x "$ACTIVE_WORK/.orchestrate/bin/"*.sh
 cat > "$ACTIVE_WORK/.orchestrate/project.md" << 'EOF'
@@ -536,7 +530,7 @@ cat > "$CLEAN_WORK/.orchestrate/inbox/active-item.md" << 'EOF'
 ## Goal
 Should not crash cleanup-stale-inbox under set -e
 EOF
-if bash "$PROJECT_ROOT/.orchestrate/bin/cleanup-stale-inbox.sh" "$CLEAN_WORK"; then
+if bash "$BIN_DIR/cleanup-stale-inbox.sh" "$CLEAN_WORK"; then
   ok "cleanup-stale-inbox exits 0 with active non-stale inbox file"
 else
   fail "cleanup-stale-inbox exited non-zero — set -e && continue bug may have regressed"
@@ -551,7 +545,7 @@ echo "10. awaiting_go task — tend is IDLE (notify-only, does NOT gate dispatch
 GATED_WORK="$TMP/gated-work"
 mkdir -p "$GATED_WORK/.orchestrate/inbox/gated" "$GATED_WORK/.orchestrate/inbox/processed" \
   "$GATED_WORK/.orchestrate/logs" "$GATED_WORK/.orchestrate/bin"
-cp "$PROJECT_ROOT/.orchestrate/bin/"{run-job.sh,drain-inbox.sh,tend-need-action.sh,cleanup-stale-inbox.sh} \
+cp "$BIN_DIR/"{run-job.sh,drain-inbox.sh,tend-need-action.sh,cleanup-stale-inbox.sh} \
   "$GATED_WORK/.orchestrate/bin/"
 chmod +x "$GATED_WORK/.orchestrate/bin/"*.sh
 cat > "$GATED_WORK/.orchestrate/project.md" << 'EOF'
@@ -606,15 +600,16 @@ else
 fi
 
 echo ""
-echo "11. drain-inbox.sh — gated/ file registers as awaiting_go, not pending"
-# Guard: drain-inbox.sh must register inbox/gated/ files with status=awaiting_go.
-# If the status is pending instead, tend go auto would execute the task automatically,
-# defeating the gate (the bug that B9D8 Hello Work exposed on 2026-06-21).
+echo "11. drain-inbox.sh — explicitly-gated file registers as awaiting_go, not pending"
+# Guard: gating is risk-based — a file carrying an explicit `gate_reason:` line
+# must register with status=awaiting_go. If it became pending instead, tend go
+# auto would execute the task automatically, defeating the human gate.
 DRAIN_WORK="$TMP/drain-gated-work"
 mkdir -p "$DRAIN_WORK/.orchestrate/inbox/gated" "$DRAIN_WORK/.orchestrate/inbox/processed" \
   "$DRAIN_WORK/.orchestrate/logs"
 cat > "$DRAIN_WORK/.orchestrate/inbox/gated/test-gated-task.md" << 'EOF'
 mode: gated
+gate_reason: requires explicit human go before running
 
 # Test Gated Task
 
@@ -624,7 +619,7 @@ This task should be registered as awaiting_go, never as pending.
 ## Acceptance Criteria
 - Registry row shows status awaiting_go
 EOF
-if bash "$PROJECT_ROOT/.orchestrate/bin/drain-inbox.sh" "$DRAIN_WORK"; then
+if bash "$BIN_DIR/drain-inbox.sh" "$DRAIN_WORK"; then
   if grep -qE '\|\s*awaiting_go\s*\|' "$DRAIN_WORK/.orchestrate/project.md" 2>/dev/null; then
     ok "drain-inbox registers gated/ file as awaiting_go"
   else
@@ -687,12 +682,12 @@ echo "12. tend preflight runs requeue-unblocked.sh WITHOUT 'local outside functi
 PREFLIGHT_WORK="$TMP/preflight-work"
 mkdir -p "$PREFLIGHT_WORK/.orchestrate/inbox/gated" "$PREFLIGHT_WORK/.orchestrate/inbox/processed" \
   "$PREFLIGHT_WORK/.orchestrate/logs" "$PREFLIGHT_WORK/.orchestrate/bin" "$PREFLIGHT_WORK/.orchestrate/tasks"
-cp "$PROJECT_ROOT/.orchestrate/bin/"{run-job.sh,drain-inbox.sh,tend-need-action.sh,cleanup-stale-inbox.sh} \
+cp "$BIN_DIR/"{run-job.sh,drain-inbox.sh,tend-need-action.sh,cleanup-stale-inbox.sh} \
   "$PREFLIGHT_WORK/.orchestrate/bin/"
 # Copy requeue-unblocked.sh if it exists so the real preflight line is exercised;
 # otherwise install a no-op stand-in so the [[ -x ]] guard path is still taken.
-if [[ -f "$PROJECT_ROOT/.orchestrate/bin/requeue-unblocked.sh" ]]; then
-  cp "$PROJECT_ROOT/.orchestrate/bin/requeue-unblocked.sh" "$PREFLIGHT_WORK/.orchestrate/bin/"
+if [[ -f "$BIN_DIR/requeue-unblocked.sh" ]]; then
+  cp "$BIN_DIR/requeue-unblocked.sh" "$PREFLIGHT_WORK/.orchestrate/bin/"
 else
   printf '#!/usr/bin/env bash\nexit 0\n' > "$PREFLIGHT_WORK/.orchestrate/bin/requeue-unblocked.sh"
 fi

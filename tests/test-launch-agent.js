@@ -8,7 +8,9 @@ const { execSync } = require('node:child_process');
 
 const PLIST_PATH = `${process.env.HOME}/Library/LaunchAgents/com.orchestrate.tend.plist`;
 const LABEL = 'com.orchestrate.tend';
-const PROJECT_DIR = `${process.env.HOME}/apps/ai-console`;
+// Installed-environment integration test: point at the project whose tend agent
+// is installed. Override with ORCHESTRATE_PROJECT_DIR; defaults to this repo.
+const PROJECT_DIR = process.env.ORCHESTRATE_PROJECT_DIR || path.resolve(__dirname, '..');
 const RUN_JOB = path.join(PROJECT_DIR, '.orchestrate/bin/run-job.sh');
 const AGENT_CONF = path.join(PROJECT_DIR, '.orchestrate/agent.conf');
 const CURSOR_BIN = `${process.env.HOME}/.local/bin/cursor-agent`;

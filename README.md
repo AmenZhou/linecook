@@ -79,7 +79,7 @@ State machine: `pending → running → awaiting_critic → complete → archive
 ## The inbox task file format
 
 ```markdown
-# Fix the rate-limit bug in ads/dsp
+# Fix the rate-limit bug in the API service
 
 ## Goal
 Rate limiter throws 429 after 100 req/s. Make it sliding-window per IP and
@@ -87,7 +87,7 @@ return Retry-After. What must be true when done: every route in src/routes/
 honors the limit and unit tests cover the boundary.
 
 ## Context
-Entry point is src/app.ts. We already use express-rate-limit in ads_rate_limit.
+Entry point is src/app.ts. We already use express-rate-limit in a sibling service.
 
 ## Acceptance Criteria
 - All routes return 429 after the limit, with Retry-After header

@@ -677,7 +677,7 @@ describe('parseTendHealth', () => {
   });
 
   test('detects run-job syntax error in stderr', () => {
-    const err = '/Users/haimengzhou/apps/ai-console/.orchestrate/bin/run-job.sh: line 203: syntax error near unexpected token `)\'\n';
+    const err = '/path/to/project/.orchestrate/bin/run-job.sh: line 203: syntax error near unexpected token `)\'\n';
     const r = parseTendHealth(tmp, '', err, { pid: '-', exitStatus: '0' });
     assert.equal(r.status, 'failed');
     assert.match(r.message, /syntax error/i);

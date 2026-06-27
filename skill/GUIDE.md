@@ -86,7 +86,7 @@ If you close the session before typing `go`, tend will push-notify you that the 
 Use auto mode for well-scoped work you trust to run end-to-end. Walk away; the heartbeat keeps it moving.
 
 ```
-/task-orchestrate "migrate the DSP campaign service to the new billing API"
+/task-orchestrate "migrate the billing service to the new payments API"
 > go auto
 ```
 
@@ -120,7 +120,7 @@ Drop tasks into `.orchestrate/inbox/` without even opening a session. The next t
 echo "write unit tests for the auth module — target 80% coverage" \
   > .orchestrate/inbox/auth-tests.md
 
-echo "generate a migration script to add indexes to DSP campaigns table" \
+echo "generate a migration script to add indexes to the campaigns table" \
   > .orchestrate/inbox/campaign-indexes.md
 ```
 
