@@ -263,4 +263,4 @@ If you were using `task-supervisor`: that skill is deprecated. The `.supervisor-
 
 ## Related
 
-- [Orchestrate inbox workflow](../../../ai-console/docs/orchestrate-inbox-workflow.md) — mermaid diagram, gated vs auto paths, ranked improvements
+- [Architecture](../docs/architecture.md) — components, the heartbeat cycle, gated vs auto paths

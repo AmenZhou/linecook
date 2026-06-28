@@ -12,7 +12,7 @@ HEARTBEAT_LOG="$ROOT/.orchestrate/logs/heartbeat.log"
 # Fail fast on syntax errors so launchd does not silently break tend (exit 2).
 if ! bash -n "${BASH_SOURCE[0]}" 2>/dev/null; then
   mkdir -p "$(dirname "$HEARTBEAT_LOG")" 2>/dev/null || true
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-job — script syntax error; reinstall from ai-toolbox" >>"$HEARTBEAT_LOG" 2>/dev/null || true
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-job — script syntax error; reinstall via install.sh" >>"$HEARTBEAT_LOG" 2>/dev/null || true
   echo "run-job.sh: syntax check failed" >&2
   exit 2
 fi

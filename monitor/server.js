@@ -1726,7 +1726,7 @@ const TEND_HEALTH_PATTERNS = [
   {
     re: /cursor cli\.json invalid|permissions\.deny|Invalid project config/i,
     status: 'misconfigured',
-    message: 'Tend misconfigured — fix .cursor/cli.json (run sync-cursor-claude-permissions.sh)',
+    message: 'Tend misconfigured — fix .cursor/cli.json',
   },
   {
     re: /Cursor IDE required but not running|Cursor not running|cursor unavailable|secondary unavailable/i,
@@ -1741,7 +1741,7 @@ const TEND_HEALTH_PATTERNS = [
   {
     re: /syntax error near unexpected token|run-job\.sh:.*syntax/i,
     status: 'failed',
-    message: 'Tend failed — run-job.sh syntax error (reinstall from ai-toolbox)',
+    message: 'Tend failed — run-job.sh syntax error (reinstall via install.sh)',
   },
 ];
 
@@ -2123,7 +2123,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  // Exit on file change so launchd (KeepAlive) restarts with fresh code after sync.sh
+  // Exit on file change so launchd (KeepAlive) restarts with fresh code after reinstall
   fs.watch(__filename, { persistent: false }, () => {
     console.log('server.js changed — restarting');
     process.exit(0);

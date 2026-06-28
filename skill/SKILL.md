@@ -687,7 +687,7 @@ Use `date -u +%Y-%m-%d` (from `COMPLETED_AT`) for the MANIFEST date column.
 On each phase checkpoint (Step C ✅), also set registry `last_activity` to `$(date -u +%Y-%m-%dT%H:%M:%SZ)` so partial progress is accurate.
 
 **1. Archive task file:**
-- Ensure `~/apps/ai-console/orchestrate-history/` exists.
+- Ensure the `orchestrate-history/` directory exists (at your central history location).
 - Copy `.orchestrate/tasks/{ID}.md` → `orchestrate-history/${ARCHIVE_STAMP}-${ID}-<slug>.md` (use `ARCHIVE_STAMP` from timestamp contract above — not a separate guessed time)
 - Add `tags:` line to archive copy.
 - **Mandatory:** Append one line to `orchestrate-history/MANIFEST.md` using exact format `YYYY-MM-DD | filename | summary | tag1, tag2`. Skipping MANIFEST breaks History tab tags/search; the monitor also scans on-disk archives as a safety net, but MANIFEST is the canonical index — never omit it.
@@ -874,17 +874,17 @@ triggered_by: <task ID>
 ## Context
 Triggered by task `<ID>` — <task summary>.
 Observation: <what was seen — retry count, gap text, repeated partial verdict>
-Applies to: <path in ai-toolbox>  ·  Installed at: ~/.claude/skills/<name>/SKILL.md
+Applies to: <path in your skill source>  ·  Installed at: ~/.claude/skills/<name>/SKILL.md
 
 ## Acceptance Criteria
 - SKILL.md section "<X>" updated as described
-- sync.sh run; installed copy reflects the change
+- skill source updated; installed copy reflects the change
 - make test passes (or "no test runner detected")
 ```
 
 **Categories** (set `Applies to:` accordingly):
-- Orchestrator → `ai-toolbox/skills/task-orchestrate/SKILL.md`
-- Invoked skill → `ai-toolbox/skills/<name>/SKILL.md`
+- Orchestrator → `skill/SKILL.md`
+- Invoked skill → `<skill>/SKILL.md`
 - Project → project-specific paths (tests, `.orchestrate/`, docs)
 
 Append to heartbeat.log:
@@ -980,7 +980,7 @@ CURSOR_FALLBACK=auto    # default — IDE closed → fall back to claude
 
 `run-job.sh` still falls back to the alternate runner on session limit / connection errors when `CURSOR_FALLBACK=auto`.
 
-Requires skills synced to `$PROJECT_DIR/.cursor/skills/` when using `RUNNER=cursor` (run `sync.sh` from ai-toolbox).
+Requires skills available at `$PROJECT_DIR/.cursor/skills/` when using `RUNNER=cursor`.
 
 To run tend manually at any time: type `tend` in any session.
 To unload: `launchctl unload ~/Library/LaunchAgents/com.orchestrate.tend.plist`

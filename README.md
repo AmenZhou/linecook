@@ -204,7 +204,7 @@ linecook/
 │   ├── first-pass-auto-resolve.sh, requeue-unblocked.sh  # self-unblock logic
 │   ├── set-runner.sh          #   switch claude ↔ cursor
 │   ├── enqueue-analyzer-daily.sh  # daily companion-job enqueuer
-│   ├── install-launchd.sh     #   original ai-toolbox installer (reference)
+│   ├── install-launchd.sh     #   original launchd installer (reference)
 │   └── agent.conf.example
 ├── launchd/                   # plist templates (rendered by install.sh)
 │   ├── com.orchestrate.tend.plist
@@ -234,7 +234,7 @@ node tests/test-launch-agent.js        # tend plist registration
 
 ## Provenance
 
-Extracted from the [`ai-toolbox`](https://github.com/) `task-orchestrate` skill and the `ai-console` `.orchestrate/` control plane. The canonical source of the skill continues to live in `ai-toolbox/skills/task-orchestrate/`; this repo packages it as a standalone, installable system.
+Packaged from a personal Claude Code `task-orchestrate` skill and its `.orchestrate/` control plane into a standalone, self-contained, installable system.
 
 ## License
 

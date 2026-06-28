@@ -7,7 +7,7 @@
 
   BEFORE INSTALLING — set PROJECT_DIR and run install-launchd.sh:
 
-    PROJECT_DIR="$HOME/apps/ai-console" bash skills/task-orchestrate/bin/install-launchd.sh
+    PROJECT_DIR="$HOME/apps/my-project" bash install.sh
 
   Logs (relative to WorkingDirectory):
     stdout -> .orchestrate/logs/monitor.log
