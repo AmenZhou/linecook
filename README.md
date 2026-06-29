@@ -2,6 +2,12 @@
 
 > *Clip a ticket, it works the rail.*
 
+<p align="center">
+  <img src="docs/assets/hero.jpg" alt="A robot line cook, BOTTY, works a kitchen pass: repo issues ride a conveyor into a triage bin, task tickets hang on the rail above the stove, code panels glow over the pans, and finished plates go out marked DONE & MERGED — all under a LAUNCHD HEARTBEAT monitor reading SYSTEM STABILITY: OPTIMAL." width="100%">
+</p>
+
+<p align="center"><em>You clip the ticket. linecook works the rail.</em></p>
+
 **Inbox & Orchestrate — autonomous background jobs for [Claude Code](https://claude.com/claude-code), driven by text files and your own laptop.**
 
 Drop a markdown file into a folder. A macOS `launchd` heartbeat picks it up, an AI harness runs it through structured phases, and the result lands in an archive. No servers, no dashboards in the cloud, no babysitting — just text files and the machine already on your desk.
