@@ -205,6 +205,7 @@
   .chip-needs_human  { color: #e3b341; border-color: #d29922; background: #2d1f00; }
   .chip-pending      { color: #6e7681; border-color: #30363d; background: #161b22; }
   .chip-failed       { color: #f85149; border-color: #da3633; background: #3d0e0e; }
+  .chip-cancelled    { color: #c9d1d9; border-color: #484f58; background: #21262d; }
 
   /* ── phase progress bar ── */
   .phase-bar {
@@ -276,6 +277,9 @@
   .badge-running      { background: var(--status-running); }
   .badge-complete     { background: var(--status-complete); }
   .badge-failed       { background: var(--status-failed); }
+  /* Deliberately cancelled (failed + cancelled_at: marker) — muted grey, not the
+     red error colour, so a cancel reads as terminal/intentional not broken. */
+  .badge-cancelled    { background: #484f58; color: #c9d1d9; }
   .badge-needs_human  { background: var(--status-needs_human); color: #000; }
   .badge-awaiting_go  { background: var(--status-awaiting_go); color: #000; }
   .badge-pending      { background: var(--status-pending); }
@@ -1629,19 +1633,22 @@ function renderApprovalBanner(taskApproval, inboxApproval, kubePending, pgPendin
 }
 
 // ── status summary bar ─────────────────────────────────────────────────────────
-const STATUS_ORDER = ['running', 'needs_human', 'awaiting_go', 'pending', 'failed'];
+const STATUS_ORDER = ['running', 'needs_human', 'awaiting_go', 'pending', 'failed', 'cancelled'];
 const STATUS_LABEL = {
   running: 'running',
   needs_human: 'needs human',
   awaiting_go: 'awaiting go',
   pending: 'pending',
   failed: 'failed',
+  cancelled: 'cancelled',
 };
 
 function renderStatusSummary(activeTasks) {
   const counts = {};
   for (const t of activeTasks) {
-    const s = (t.status || 'pending').toLowerCase();
+    // Cancelled rows carry status `failed` — bucket them under `cancelled` so the
+    // summary distinguishes deliberate cancels from genuine failures.
+    const s = t.cancelled ? 'cancelled' : (t.status || 'pending').toLowerCase();
     counts[s] = (counts[s] || 0) + 1;
   }
 
@@ -1657,7 +1664,13 @@ function renderStatusSummary(activeTasks) {
 }
 
 // ── render tasks ──────────────────────────────────────────────────────────────
-function statusBadge(status) {
+function statusBadge(status, cancelled) {
+  // A deliberately-cancelled task carries registry status `failed` but a durable
+  // cancelled_at: marker — render it as a distinct grey "cancelled" badge so it
+  // does not read as a genuine error.
+  if (cancelled) {
+    return `<span class="badge badge-cancelled">cancelled</span>`;
+  }
   const s = (status || 'pending').toLowerCase().replace(/[^a-z_]/g, '_');
   return `<span class="badge badge-${s}">${esc(status || 'unknown')}</span>`;
 }
@@ -1670,10 +1683,12 @@ function modeBadge(mode) {
 
 function renderTasks() {
   const { registry, tasks } = tasksData;
-  const allActive = (registry || []).filter(r => r.status !== 'complete');
+  const allActive = (registry || []).filter(r => r.status !== 'complete' && !r.cancelled);
 
-  // Approval-needed tasks first, then blocked before awaiting_go
+  // Approval-needed tasks first, then blocked before awaiting_go.
+  // Cancelled rows (failed + cancelled_at:) are terminal — sort them last.
   const sortRank = (r) => {
+    if (r.cancelled) return 3;
     if (isBlockedStatus(r.status)) return 0;
     if (r.needsApproval) return 1;
     return 2;
@@ -1702,13 +1717,19 @@ function renderTasks() {
     const totalPhases = parseTotalPhases(taskMd);
     const relActivity = relTime(row.last_activity);
     const needsApproval = row.needsApproval;
-    const blocked = isBlockedStatus(row.status);
+    // A cancelled task (failed + cancelled_at:) is terminal & non-actionable —
+    // never treat it as a blocked/attention row even though its status is `failed`.
+    const cancelled = !!row.cancelled;
+    const blocked = !cancelled && isBlockedStatus(row.status);
     const cardCls = needsApproval
       ? `card card-needs-approval${blocked ? ' card-blocked' : ''}`
       : 'card';
-    const approvalBadge = needsApproval
-      ? `<span class="badge ${blocked ? 'badge-blocked' : 'badge-approval'}">${esc(row.approvalLabel || 'Approval required')}</span>`
-      : '';
+    // Surface the durable "Cancelled" label distinct from "Failed — review required".
+    const approvalBadge = cancelled
+      ? `<span class="badge badge-cancelled">${esc(row.approvalLabel || 'Cancelled')}</span>`
+      : needsApproval
+        ? `<span class="badge ${blocked ? 'badge-blocked' : 'badge-approval'}">${esc(row.approvalLabel || 'Approval required')}</span>`
+        : '';
 
     const isGated = row.status === 'awaiting_go';
     const isNeedsHuman = row.status === 'needs_human';
@@ -1755,7 +1776,7 @@ function renderTasks() {
   <div class="card-header">
     <span class="task-id">${esc(id)}</span>
     ${approvalBadge}
-    ${statusBadge(row.status)}
+    ${statusBadge(row.status, cancelled)}
     ${modeBadge(row.mode)}
     ${relActivity ? `<span class="rel-time">${esc(relActivity)}</span>` : ''}
   </div>
@@ -2122,10 +2143,25 @@ function todayEasternYmd() {
 }
 
 function easternYmdFromIso(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
+  // Parse timezone-less ISO as UTC (parseIsoUtc), never as browser-local time —
+  // otherwise a "...T03:30:00" (no Z) row would bucket to the wrong Eastern day.
+  const d = parseIsoUtc(iso);
+  if (!d || isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
+// Boundary-robust default ("today") window — mirrors server isInDefaultHistoryWindow.
+// A row is in-window if its Eastern day is today's Eastern day OR its instant is
+// within the last 24h, so a task completed just before local midnight (whose UTC
+// date has already rolled to "tomorrow") stays visible instead of vanishing.
+function isInDefaultHistoryWindow(iso, nowMs) {
+  const d = parseIsoUtc(iso);
+  if (!d || isNaN(d.getTime())) return false;
+  const now = nowMs == null ? Date.now() : nowMs;
+  const todayYmd = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  if (d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === todayYmd) return true;
+  const ageMs = now - d.getTime();
+  return ageMs >= 0 && ageMs <= 24 * 60 * 60 * 1000;
 }
 
 function isDailyHistoryRow(row) {
@@ -2149,9 +2185,8 @@ function setHistoryDateRange(range) {
 function filterHistoryByRange(rows) {
   if (historyDateRange === 'all') return rows;
   if (historyDateRange === 'daily') return rows.filter(isDailyHistoryRow);
-  const todayYmd = todayEasternYmd();
   if (historyDateRange === 'today') {
-    return rows.filter(r => easternYmdFromIso(r.dateIso) === todayYmd);
+    return rows.filter(r => isInDefaultHistoryWindow(r.dateIso));
   }
   const days = historyDateRange === '30d' ? 30 : 7;
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;

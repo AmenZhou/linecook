@@ -43,9 +43,10 @@ The `.orchestrate/` directory is created automatically the first time you run a 
 
 The orchestrator:
 1. Reads `## Shared Context` from `project.md` (if it exists) — uses prior decisions to inform the plan
-2. Classifies complexity and breaks the task into 2–6 phases
-3. Presents the plan and asks clarifying questions
-4. Waits for your `go` or `go auto`
+2. Pulls a bounded `/wiki-context-pack` slice (~1500 tokens, cached in the task file's `## Wiki Context` section) unless the task is itself a wiki-maintenance job, degrading gracefully if the pack is unavailable
+3. Classifies complexity and breaks the task into 2–6 phases
+4. Presents the plan and asks clarifying questions
+5. Waits for your `go` or `go auto`
 
 **`go`** — gated mode: pauses after each phase for your review before continuing.
 **`go auto`** — auto mode: runs all phases end-to-end, only stops on a hard failure.
@@ -86,7 +87,7 @@ If you close the session before typing `go`, tend will push-notify you that the 
 Use auto mode for well-scoped work you trust to run end-to-end. Walk away; the heartbeat keeps it moving.
 
 ```
-/task-orchestrate "migrate the billing service to the new payments API"
+/task-orchestrate "migrate the DSP campaign service to the new billing API"
 > go auto
 ```
 
@@ -120,7 +121,7 @@ Drop tasks into `.orchestrate/inbox/` without even opening a session. The next t
 echo "write unit tests for the auth module — target 80% coverage" \
   > .orchestrate/inbox/auth-tests.md
 
-echo "generate a migration script to add indexes to the campaigns table" \
+echo "generate a migration script to add indexes to DSP campaigns table" \
   > .orchestrate/inbox/campaign-indexes.md
 ```
 
@@ -179,6 +180,26 @@ Every new task's planning phase reads Shared Context first. The orchestrator inc
 | Tend watchdog | Notifies you phase is ready, never advances | Advances `awaiting_critic` stalls automatically |
 
 **Rule of thumb:** use `go auto` for tasks where you've done similar work before and trust the plan. Use `go` for new territory, risky changes, or anything touching production.
+
+---
+
+## Automatic Review + Tests Enforcement
+
+Every task that **changed code** is guaranteed an independent review pass and test pass — on top of the inline critic and Test & Verify gate that run inside the authoring session (this *supplements*, it does not replace them).
+
+When a code-changing task completes, the orchestrator auto-enqueues two follow-up inbox tickets into the canonical ai-console inbox:
+
+- a `kind: review` ticket — a fresh tend cycle runs an independent code-change review over the diff
+- a `kind: tests` ticket — a fresh tend cycle authors/runs tests for the changed files
+
+Both land `mode: auto` (no human `go` needed) and are drained like any other inbox task.
+
+| Detail | Behavior |
+|--------|----------|
+| Trigger | Fires only when `files_changed` contains real code/script/config (not pure docs/log/registry/archive changes) |
+| Anti-recursion | Every generated ticket carries a `followup_for: <source-ID>` header; a task that already has `followup_for:` enqueues **nothing**, so review/tests tickets never breed more |
+| Idempotent | Dedups on the `(followup_for, kind)` pair across inbox, registry, and history — a re-run never piles up duplicates |
+| Authoritative path | The deterministic `finalize-completed-tasks.sh` reaper calls `enqueue-review-and-tests.sh`, so unattended `tend` enforces it even if the authoring session dies mid-Completion |
 
 ---
 
@@ -263,4 +284,4 @@ If you were using `task-supervisor`: that skill is deprecated. The `.supervisor-
 
 ## Related
 
-- [Architecture](../docs/architecture.md) — components, the heartbeat cycle, gated vs auto paths
+- [Orchestrate inbox workflow](../../../ai-console/docs/orchestrate-inbox-workflow.md) — mermaid diagram, gated vs auto paths, ranked improvements

@@ -34,15 +34,42 @@ registry_status() {
 }
 
 # C2 — deferral / closure language in blockers or AC checklist
-if grep -qiE '(deferred( to)?|out of scope|not a blocker|no action needed|Forbidden|closed —)' "$TF"; then
+# The "closed —" alternative is checked separately, on a copy of the file with
+# any line mentioning the security fail-safe phrase "fail closed" / "fail-closed" /
+# "failed closed" stripped out first — otherwise a legitimate design-principle
+# comment like "(fail closed — additive, not a loosening)" false-positives as a
+# task-closure statement and would send an unresolved blocker back to pending.
+if grep -qiE '(deferred( to)?|out of scope|not a blocker|no action needed|Forbidden)' "$TF" || \
+   { grep -viE 'fail(ed)?[-[:space:]]?closed' "$TF" | grep -qiE 'closed[[:space:]]*—'; }; then
   printf '%s\n' "C2:deferral-or-closure-language"
   exit 0
 fi
 
 # C4 — referenced report file has closure marker
+# Skip known skill-doc / non-report files. SKILL.md (and other task-orchestrate
+# skill docs) describe the C4 pattern itself in their own prose — e.g. SKILL.md
+# literally contains the strings "**Status:** ✅" and "**Closed:**" while
+# explaining what C4 matches — so a naive scan self-matches on SKILL.md's
+# documentation, not a real closure report. These paths are never genuine
+# report/closure files, so exclude them from the referenced-file scan.
+# Defined with () (subshell), not {}, so 'shopt -s nocasematch' is scoped to
+# this function's invocation only and never leaks into the calling script —
+# the case match below must be case-INSENSITIVE (case-insensitive filesystems
+# like default APFS let a wrong-case path resolve to the real SKILL.md even
+# though a case-sensitive glob wouldn't match it — see 20260721-inbox-A1CF).
+is_skill_doc_ref() (
+  shopt -s nocasematch
+  case "$1" in
+    */SKILL.md|SKILL.md|*/.claude/skills/*|*/ai-toolbox/skills/*|*/.cursor/skills/*)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+)
 while IFS= read -r ref; do
   [[ -z "$ref" ]] && continue
   ref="${ref/#\~/$HOME}"
+  is_skill_doc_ref "$ref" && continue
   if [[ -f "$ref" ]] && grep -qE '\*\*(Closed|Status):\*\*.*(✅|Closed|CONFIRMED)' "$ref" 2>/dev/null; then
     printf '%s\n' "C4:report-closure:$ref"
     exit 0
@@ -83,6 +110,18 @@ if grep -qiE '(EPIPE|ETIMEDOUT|ECONNRESET|429|session limit|connection lost)' "$
    ! grep -qE 'retries:[[:space:]]*[3-9]' "$TF" 2>/dev/null; then
   printf '%s\n' "C3:transient-retry-once"
   exit 0
+fi
+
+# C6 — locally-executable action mislabeled as a human block.
+# Cross-project/local file writes, reversible settings/config writes, and runnable
+# scripts are NOT human blockers — the agent can do them itself. These over-fire the
+# needs_human gate (see 59FA cross-project write, 1EC4 settings.json write).
+# Guard: never apply when the block is a genuine external dependency.
+if ! grep -qiE '(kubectl|live cluster|load.?ramp|external service|no.?master|credential|human (decision|approval)|missing (secret|token|password))' "$TF" 2>/dev/null; then
+  if grep -qiE '(cross.?project (file )?write|local (file )?write|settings\.json|config write|reversible (settings|config)|agent\.conf|run (a |the )?(local )?script)' "$TF" 2>/dev/null; then
+    printf '%s\n' "C6:locally-executable-not-a-block"
+    exit 0
+  fi
 fi
 
 exit 1

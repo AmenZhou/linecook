@@ -24,14 +24,31 @@ count_status() {
   ' "$PROJ"
 }
 
+# Detect whether a task file records a genuine, still-unresolved human block —
+# mirrors finalize-completed-tasks.sh's file_records_genuine_block(). A
+# PARTIAL-suffixed `status: ✓ complete (PARTIAL ...)` line is a real, honest
+# gap, not a clean completion — it must never be substring-matched as plain
+# `✓ complete` (that false-positive already bit finalize-completed-tasks.sh
+# once; TNAP-1 found the same un-anchored bug still live here).
+file_records_genuine_block() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  grep -qE '^blocked_on:[[:space:]]*EXTERNAL' "$file" 2>/dev/null && return 0
+  grep -qE '^## Human-only block' "$file" 2>/dev/null && return 0
+  grep -qE '^status:[[:space:]]*✓ complete[[:space:]]*\(PARTIAL' "$file" 2>/dev/null && return 0
+  return 1
+}
+
 # Count `needs_human` rows that still need an AGENT pass. A needs_human row is
 # agent-actionable when the agent can still advance it without a human:
 #   - task file MISSING + a ghost-reset heartbeat line  → auto-job re-queue
-#   - task file present + ALL phases ✓ complete          → run Completion inline
+#   - task file present + ALL phases ✓ complete (clean)  → run Completion inline
 #   - task file present + NO human_resolution: line yet  → first-pass auto-resolution check
 # A row is HUMAN-BLOCKED (bypass) when its task file already carries a
-# human_resolution: line and phases are incomplete — the agent evaluated it and
-# deliberately left it blocked; re-waking the agent just burns tokens.
+# human_resolution: line and phases are incomplete, OR it records a genuine
+# block (bypassed_at:, blocked_on: EXTERNAL, ## Human-only block, or a
+# PARTIAL-suffixed completion line) — the agent evaluated it and deliberately
+# left it blocked; re-waking the agent just burns tokens.
 count_needs_human_actionable() {
   [[ -f "$PROJ" ]] || { echo 0; return; }
   local count=0 id tf phases done_phases
@@ -44,16 +61,25 @@ count_needs_human_actionable() {
       fi
       continue
     fi
+    if grep -q '^bypassed_at:' "$tf" 2>/dev/null; then
+      continue                  # parked (any block type) → bypass, never re-process
+    fi
+    if file_records_genuine_block "$tf"; then
+      continue                  # genuine unresolved block → bypass, even if phase count matches
+    fi
     phases=$(grep -c '^### Phase' "$tf" 2>/dev/null) || phases=0
-    done_phases=$(grep -c '✓ complete' "$tf" 2>/dev/null) || done_phases=0
+    # A single-line `(DEFER...)` suffix counts as a clean completion (matches
+    # finalize-completed-tasks.sh; see 20260725-inbox-DEFR1). A multi-line
+    # suffix (e.g. "checkpointed retroactively ...") is not matched here —
+    # accepted conservative limitation, under-counts rather than over-counts.
+    done_phases="$(grep -cE '^status:[[:space:]]*✓ complete[[:space:]]*(\(DEFER[^)]*\))?[[:space:]]*$' "$tf" 2>/dev/null | head -1 | tr -dc '0-9')"
+    [[ -n "$done_phases" ]] || done_phases=0
     if [[ "$phases" -gt 0 && "$phases" -eq "$done_phases" ]]; then
-      count=$(( count + 1 ))     # completion-eligible
-    elif grep -q '^bypassed_at:' "$tf" 2>/dev/null; then
-      :                          # parked (any block type) → bypass, never re-process
+      count=$(( count + 1 ))     # completion-eligible (clean — no PARTIAL/block markers)
     elif ! grep -q '^human_resolution:' "$tf" 2>/dev/null; then
       count=$(( count + 1 ))     # not yet evaluated → needs first-pass check
     fi
-    # else: bypassed_at OR human_resolution + incomplete phases → genuine blocker → bypass
+    # else: human_resolution + incomplete phases → genuine blocker → bypass
   done < <(awk -F'|' '
     /^\|/ && $2 !~ /^[[:space:]]*ID[[:space:]]*$/ && $2 !~ /^-+$/ {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", $6)
@@ -67,6 +93,9 @@ count_needs_human_actionable() {
 # Agent-executable registry work: pending + awaiting_critic + actionable needs_human.
 # Excluded on purpose: awaiting_go (gated, notify-only — never auto-executes) and
 # running (live session holds the lock; stale ghosts are reset by run-job.sh bash).
+# Also never counted: failed (terminal — review-only; this includes dashboard
+# CANCELLED tasks, which are `failed` rows carrying a `cancelled_at:` marker:
+# terminal + non-actionable, same as a failed+bypassed row — never re-surfaced).
 PENDING="$(count_status pending)"
 AWAITING_CRITIC="$(count_status awaiting_critic)"
 NEEDS_HUMAN_ACTIONABLE="$(count_needs_human_actionable)"
