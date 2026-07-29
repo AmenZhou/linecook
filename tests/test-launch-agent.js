@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('node:os');
 const path = require('path');
 const { execSync } = require('node:child_process');
 
@@ -50,6 +51,19 @@ const GLOBAL_INSTALLED = fs.existsSync(PLIST_PATH);
 const GLOBAL_SKIP_REASON =
   'no orchestrate install found globally (com.orchestrate.tend.plist absent) — skipping';
 
+// cursor-agent is only installed for RUNNER=cursor (see bin/set-runner.sh) — a
+// legitimate RUNNER=claude install never has it on disk, so gate the binary
+// check on the configured runner, not just on "something is installed".
+function readConfiguredRunner(confPath = AGENT_CONF) {
+  if (!fs.existsSync(confPath)) return null;
+  const raw = fs.readFileSync(confPath, 'utf8');
+  const match = raw.match(/^RUNNER=(cursor|claude)\s*$/m);
+  return match ? match[1] : null;
+}
+const CONFIGURED_RUNNER = readConfiguredRunner();
+const RUNNER_CLAUDE_SKIP_REASON =
+  'RUNNER=claude configured — cursor-agent binary is never installed for this runner';
+
 test('plist file exists', (t) => {
   if (!GLOBAL_INSTALLED) return t.skip(GLOBAL_SKIP_REASON);
   assert.ok(fs.existsSync(PLIST_PATH), `plist not found at ${PLIST_PATH}`);
@@ -73,11 +87,31 @@ test('agent.conf exists with RUNNER setting', (t) => {
   if (!INSTALLED) return t.skip(SKIP_REASON);
   assert.ok(fs.existsSync(AGENT_CONF), `agent.conf missing at ${AGENT_CONF}`);
   const raw = fs.readFileSync(AGENT_CONF, 'utf8');
-  assert.match(raw, /^RUNNER=(cursor|claude)/m, 'agent.conf must set RUNNER=cursor or RUNNER=claude');
+  assert.match(raw, /^RUNNER=(cursor|claude)\s*$/m, 'agent.conf must set RUNNER=cursor or RUNNER=claude');
+});
+
+test('readConfiguredRunner rejects a malformed RUNNER value (anchored regex)', (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'launch-agent-test-'));
+  const tmpConf = path.join(tmpDir, 'agent.conf');
+  try {
+    // A typo'd/malformed value must not substring-match a valid runner name —
+    // the pre-6B23 unanchored regex misparsed this as "claude".
+    fs.writeFileSync(tmpConf, 'RUNNER=clauded\n');
+    assert.equal(readConfiguredRunner(tmpConf), null, 'malformed RUNNER value must not parse as a valid runner');
+
+    fs.writeFileSync(tmpConf, 'RUNNER=claude\n');
+    assert.equal(readConfiguredRunner(tmpConf), 'claude', 'exact RUNNER=claude must still parse correctly');
+
+    fs.writeFileSync(tmpConf, 'RUNNER=cursor\n');
+    assert.equal(readConfiguredRunner(tmpConf), 'cursor', 'exact RUNNER=cursor must still parse correctly');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('cursor-agent binary exists on disk (default runner)', (t) => {
   if (!GLOBAL_INSTALLED) return t.skip(GLOBAL_SKIP_REASON);
+  if (CONFIGURED_RUNNER === 'claude') return t.skip(RUNNER_CLAUDE_SKIP_REASON);
   assert.ok(fs.existsSync(CURSOR_BIN), `cursor-agent binary missing at ${CURSOR_BIN}`);
 });
 
