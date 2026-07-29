@@ -35,11 +35,28 @@ function launchctlList() {
   return null;
 }
 
-test('plist file exists', () => {
+// PLIST_PATH and CURSOR_BIN are global, unscoped-to-project paths — unlike
+// RUN_JOB/AGENT_CONF above, install-launchd.sh writes them under the
+// non-project-namespaced `com.orchestrate.tend` label and ~/.local/bin, so
+// their presence says nothing about *this* checkout being installed; it only
+// reflects whatever project (if any) happens to be installed on this machine.
+// Gate on the plist itself: install-launchd.sh always writes
+// com.orchestrate.tend.plist as part of any orchestrate install (for any
+// project), so its presence is the best available "something is installed
+// globally" signal for these unscoped paths. On a machine with zero
+// orchestrate installs anywhere, this is false and the subtests below skip
+// gracefully instead of failing.
+const GLOBAL_INSTALLED = fs.existsSync(PLIST_PATH);
+const GLOBAL_SKIP_REASON =
+  'no orchestrate install found globally (com.orchestrate.tend.plist absent) — skipping';
+
+test('plist file exists', (t) => {
+  if (!GLOBAL_INSTALLED) return t.skip(GLOBAL_SKIP_REASON);
   assert.ok(fs.existsSync(PLIST_PATH), `plist not found at ${PLIST_PATH}`);
 });
 
-test('plist uses run-job wrapper', () => {
+test('plist uses run-job wrapper', (t) => {
+  if (!GLOBAL_INSTALLED) return t.skip(GLOBAL_SKIP_REASON);
   const raw = fs.readFileSync(PLIST_PATH, 'utf8');
   assert.ok(raw.includes('run-job.sh'), 'expected run-job.sh wrapper in plist');
   assert.ok(raw.includes('<string>tend</string>'), 'expected tend job arg in plist');
@@ -59,7 +76,8 @@ test('agent.conf exists with RUNNER setting', (t) => {
   assert.match(raw, /^RUNNER=(cursor|claude)/m, 'agent.conf must set RUNNER=cursor or RUNNER=claude');
 });
 
-test('cursor-agent binary exists on disk (default runner)', () => {
+test('cursor-agent binary exists on disk (default runner)', (t) => {
+  if (!GLOBAL_INSTALLED) return t.skip(GLOBAL_SKIP_REASON);
   assert.ok(fs.existsSync(CURSOR_BIN), `cursor-agent binary missing at ${CURSOR_BIN}`);
 });
 
