@@ -36,17 +36,22 @@ function getFreePort() {
 // start timeout." getFreePort() replaced the hardcode. These tests prove the
 // helper actually avoids a squatted port instead of just happening to work.
 describe('getFreePort port-squatting resilience', () => {
-  test('returns a free port other than 7843 when 7843 is occupied by a squatter', async () => {
+  test('returns a free port other than the one a squatter is occupying', async () => {
+    // Squat a port getFreePort() itself finds free, rather than hardcoding 7843 —
+    // a hardcoded literal would make this test itself fail (EADDRINUSE on its own
+    // squatter.listen) if something external already holds 7843 when this runs,
+    // which is exactly the scenario the whole fix exists to survive.
+    const squatPort = await getFreePort();
     const squatter = net.createServer();
     await new Promise((resolve, reject) => {
       squatter.on('error', reject);
-      squatter.listen(7843, '127.0.0.1', resolve);
+      squatter.listen(squatPort, '127.0.0.1', resolve);
     });
     try {
       const port = await getFreePort();
       assert.equal(typeof port, 'number');
       assert.ok(Number.isInteger(port) && port > 0 && port < 65536, 'port must be a valid TCP port number');
-      assert.notEqual(port, 7843, 'getFreePort must not return the already-squatted port 7843');
+      assert.notEqual(port, squatPort, 'getFreePort must not return the already-squatted port');
     } finally {
       await new Promise((resolve) => squatter.close(resolve));
     }
