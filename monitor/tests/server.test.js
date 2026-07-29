@@ -29,6 +29,48 @@ function getFreePort() {
   });
 }
 
+// Regression test for the 2026-07 fix (commit 3e0842a): this suite used to
+// hardcode TEST_PORT = 7843, so a stray/orphaned process already bound to
+// 7843 (e.g. an old monitor/server.js, or ai-console's own monitor sharing the
+// same default port) silently broke the whole suite with an opaque "server
+// start timeout." getFreePort() replaced the hardcode. These tests prove the
+// helper actually avoids a squatted port instead of just happening to work.
+describe('getFreePort port-squatting resilience', () => {
+  test('returns a free port other than 7843 when 7843 is occupied by a squatter', async () => {
+    const squatter = net.createServer();
+    await new Promise((resolve, reject) => {
+      squatter.on('error', reject);
+      squatter.listen(7843, '127.0.0.1', resolve);
+    });
+    try {
+      const port = await getFreePort();
+      assert.equal(typeof port, 'number');
+      assert.ok(Number.isInteger(port) && port > 0 && port < 65536, 'port must be a valid TCP port number');
+      assert.notEqual(port, 7843, 'getFreePort must not return the already-squatted port 7843');
+    } finally {
+      await new Promise((resolve) => squatter.close(resolve));
+    }
+  });
+
+  test('returns different ports on successive calls when the first is still open', async () => {
+    const port1 = await getFreePort();
+    // Keep port1 bound while asking for a second port, so getFreePort cannot
+    // just echo back a cached/fixed value — it must consult the OS again.
+    const holder = net.createServer();
+    await new Promise((resolve, reject) => {
+      holder.on('error', reject);
+      holder.listen(port1, '127.0.0.1', resolve);
+    });
+    try {
+      const port2 = await getFreePort();
+      assert.equal(typeof port2, 'number');
+      assert.notEqual(port2, port1, 'getFreePort must not return a still-open port a second time');
+    } finally {
+      await new Promise((resolve) => holder.close(resolve));
+    }
+  });
+});
+
 function get(pathname) {
   return new Promise((resolve, reject) => {
     http.get(`http://127.0.0.1:${TEST_PORT}${pathname}`, (res) => {
