@@ -181,6 +181,17 @@ else
   fail "install-launchd.sh missing or not executable at $BIN_DIR/install-launchd.sh"
 fi
 
+# New orchestrate scripts present in bin/ (synced from ai-toolbox source)
+for f in append-manifest-line.sh append-phase-log.sh churn-guard.sh \
+         detect-orphaned-awaiting-go.sh finalize-completed-tasks.sh followup-dedup.sh \
+         requeue-orphaned-running.sh update-registry-row.sh; do
+  if [ -f "$BIN_DIR/$f" ]; then
+    ok "$f present in bin/"
+  else
+    fail "$f MISSING from bin/"
+  fi
+done
+
 # ── 7. agent.conf.example (configurable runner) ───────────────────────────────
 echo ""
 echo "7. agent.conf.example (configurable runner)"
