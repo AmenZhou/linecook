@@ -230,10 +230,22 @@ linecook/
 ## Tests
 
 ```bash
-bash tests/test-task-orchestrate.sh    # control-plane invariants
-bash tests/test-run-job.sh             # launchd dispatch (mock claude/cursor)
-node monitor/tests/server.test.js      # dashboard API routes
-node tests/test-launch-agent.js        # tend plist registration
+bash tests/test-task-orchestrate.sh       # control-plane invariants + bin/ scripts present
+bash tests/test-run-job.sh                # launchd dispatch (mock claude/cursor)
+node monitor/tests/server.test.js         # dashboard API routes
+
+# per-script regression tests
+bash tests/test-append-manifest-line.sh
+bash tests/test-append-phase-log.sh
+bash tests/test-churn-guard.sh
+bash tests/test-detect-orphaned-awaiting-go.sh
+bash tests/test-finalize-completed-tasks.sh
+bash tests/test-first-pass-auto-resolve.sh
+bash tests/test-followup-dedup.sh
+bash tests/test-requeue-orphaned-running.sh
+bash tests/test-update-registry-row.sh
+
+node tests/test-launch-agent.js           # tend plist registration (requires install.sh first)
 ```
 
 ---

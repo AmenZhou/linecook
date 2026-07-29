@@ -59,7 +59,7 @@ echo ""
 echo "3. Tend watchdog mechanics"
 
 skill_has 'NEED_ACTION=0' "T-1 pre-flight defines NEED_ACTION"
-skill_has 'awaiting_critic\|awaiting_go' "T-1 checks stalled task statuses"
+skill_has 'awaiting_critic' "T-1 checks stalled task statuses (awaiting_critic)"
 skill_has '\.orchestrate/inbox/\*\.md' "T-1 checks inbox glob"
 skill_has '360' "T-0 lock uses 360s staleness threshold"
 skill_has '## Goal' "inbox file format requires Goal section"
@@ -67,7 +67,7 @@ skill_has 'inbox/gated' "T-2 documents inbox/gated/ path"
 skill_has '`inbox`' "invocation table includes inbox mode"
 skill_has '## Inbox Mode' "SKILL.md has Inbox Mode section"
 skill_has 'deferred_at:' "T-2 skips deferred inbox files"
-skill_has 'Gated tasks never auto-execute' "T-4 awaiting_go tasks are never auto-executed"
+skill_has 'Gated tasks still never auto-execute' "T-4 awaiting_go tasks are never auto-executed"
 skill_has 'auto-resolved needs_human' "T-4 auto-resolves needs_human when all phases complete"
 skill_has 'self-unblocked' "T-4 second-pass auto-resolution logs self-unblocked to heartbeat"
 skill_has 'Second-Pass Auto-Resolution Check' "T-4 has second-pass check before surfacing needs_human"
@@ -180,6 +180,17 @@ if [ -x "$BIN_DIR/install-launchd.sh" ]; then
 else
   fail "install-launchd.sh missing or not executable at $BIN_DIR/install-launchd.sh"
 fi
+
+# New orchestrate scripts present in bin/ (synced from ai-toolbox source)
+for f in append-manifest-line.sh append-phase-log.sh churn-guard.sh \
+         detect-orphaned-awaiting-go.sh finalize-completed-tasks.sh followup-dedup.sh \
+         requeue-orphaned-running.sh update-registry-row.sh; do
+  if [ -f "$BIN_DIR/$f" ]; then
+    ok "$f present in bin/"
+  else
+    fail "$f MISSING from bin/"
+  fi
+done
 
 # ── 7. agent.conf.example (configurable runner) ───────────────────────────────
 echo ""

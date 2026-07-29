@@ -7,7 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
-const { intervalLabel, buildLaunchdAgents, tendThrottleHint, parseTendHealth, readTendMode, readAgentConf, readRunner, readAgentStatus, isCursorIdeRunning, isTendGoAuto, taskApprovalInfo, parseInboxMeta, isCompletedInboxFile, manifestMatchesRegistry, archiveDateFromFilename, resolveHistoryDatetime, isPlaceholderTimestamp, isFutureTimestamp, buildCompletionHints, findHistoryEntry, loadHistoryEntries, buildHistoryRows, historyStats, historyCoverage, extractTaskIdFromFilename, collectTaskLogContent, synthesizeHistoryStub, findInboxSourceForTask, approveRegistryTask, listKubeReviews, approveKubeReview } = require('../server');
+const vm = require('vm');
+const { parseRegistry, intervalLabel, buildLaunchdAgents, tendThrottleHint, parseTendHealth, readTendMode, readAgentConf, readRunner, readAgentStatus, isCursorIdeRunning, isTendGoAuto, taskApprovalInfo, isCancelledTask, computeRegistryCancelledFlags, stampCancelMarker, parseInboxMeta, isCompletedInboxFile, manifestMatchesRegistry, archiveDateFromFilename, resolveHistoryDatetime, HISTORY_TZ, historyEasternYmd, isInDefaultHistoryWindow, isoToDate, isPlaceholderTimestamp, isFutureTimestamp, buildCompletionHints, findHistoryEntry, loadHistoryEntries, buildHistoryRows, historyStats, historyCoverage, extractTaskIdFromFilename, collectTaskLogContent, synthesizeHistoryStub, findInboxSourceForTask, approveRegistryTask, listKubeReviews, approveKubeReview, formatRegistryRow, checkRegistryInvariant } = require('../server');
 
 const TEST_PORT = 7843;
 let tmpDir;
@@ -132,12 +133,38 @@ before(async () => {
     '[2026-01-01T00:05:00Z] inbox-analyzer — scanned 2 logs, found 0 issues\n',
   );
 
+  // Fixture LaunchAgents dir so /api/launchd is driven by seeded plists, not the
+  // live host's ~/Library/LaunchAgents (which a tmpDir fixture cannot isolate).
+  const launchdDir = path.join(tmpDir, 'LaunchAgents');
+  fs.mkdirSync(launchdDir, { recursive: true });
+  // Inline plist literal (MINIMAL_PLIST is declared later in the file and is in
+  // the TDZ while this root before() hook runs).
+  const fixturePlist = (label, interval) =>
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<plist version="1.0"><dict>\n' +
+    `  <key>Label</key><string>${label}</string>\n` +
+    `  <key>StartInterval</key><integer>${interval}</integer>\n` +
+    '</dict></plist>';
+  fs.writeFileSync(path.join(launchdDir, 'com.orchestrate.tend.plist'),
+    fixturePlist('com.orchestrate.tend', 300));
+  fs.writeFileSync(path.join(launchdDir, 'com.inbox-zero.catchup.plist'),
+    fixturePlist('com.inbox-zero.catchup', 3600));
+
   // Start server in tmpDir with TEST_PORT
   serverProcess = spawn(process.execPath, [
     path.join(__dirname, '..', 'server.js'),
   ], {
     cwd: tmpDir,
-    env: { ...process.env, PORT: String(TEST_PORT) },
+    // Inject a clean launchctl listing so tendHealth does not depend on the host's
+    // live com.orchestrate.tend LastExitStatus (a nonzero host exit would flip
+    // /api/tasks body.tendHealth.ok to false and fail this hermetic fixture test),
+    // and a fixture LaunchAgents dir so /api/launchd never reads live host plists.
+    env: {
+      ...process.env,
+      PORT: String(TEST_PORT),
+      ORCH_TEST_LAUNCHCTL: '- 0 com.orchestrate.tend\n- 0 com.inbox-zero.catchup\n',
+      ORCH_TEST_LAUNCHD_DIR: launchdDir,
+    },
     stdio: 'pipe',
   });
 
@@ -170,6 +197,8 @@ test('/ serves index.html', async () => {
   assert.ok(body.includes('data-tab="kube"'), 'index should include Kube tab');
   assert.ok(body.includes('await fetchTasks();'), 'approveGatedTask should refresh via fetchTasks()');
   assert.ok(!body.includes('await loadTasks();'), 'approveGatedTask must not call undefined loadTasks()');
+  assert.ok(body.includes('function isInDefaultHistoryWindow'), 'index must ship boundary-robust today filter');
+  assert.ok(body.includes('filterHistoryByRange'), 'index must filter History tab by date range');
 });
 
 test('/api/tasks returns registry rows and task content', async () => {
@@ -321,6 +350,73 @@ describe('taskApprovalInfo', () => {
     const info = taskApprovalInfo({ status: 'needs_human' });
     assert.equal(info.needsApproval, true);
     assert.equal(info.approvalReason, 'needs_human');
+  });
+  test('failed (no cancel marker) is "Failed — review required" and needs approval', () => {
+    const info = taskApprovalInfo({ status: 'failed' });
+    assert.equal(info.needsApproval, true);
+    assert.equal(info.approvalReason, 'failed');
+    assert.equal(info.approvalLabel, 'Failed — review required');
+    assert.notEqual(info.cancelled, true);
+  });
+  test('failed + cancelled flag classifies "Cancelled" — distinct from failed, non-actionable', () => {
+    const info = taskApprovalInfo({ status: 'failed', cancelled: true });
+    assert.equal(info.needsApproval, false, 'cancelled is terminal/non-actionable');
+    assert.equal(info.approvalReason, 'cancelled');
+    assert.equal(info.approvalLabel, 'Cancelled');
+    assert.equal(info.cancelled, true);
+  });
+});
+
+describe('isCancelledTask', () => {
+  test('true when task file carries cancelled_at: marker', () => {
+    assert.equal(isCancelledTask('cancelled_at: 2026-01-01T00:00:00Z\ncancel_reason: x\nid: t\n'), true);
+  });
+  test('false for a genuine failure with no marker', () => {
+    assert.equal(isCancelledTask('id: t\nstatus: failed\n### Phase 1\nstatus: x failed\n'), false);
+  });
+  test('false for null/empty content', () => {
+    assert.equal(isCancelledTask(null), false);
+    assert.equal(isCancelledTask(''), false);
+  });
+});
+
+describe('computeRegistryCancelledFlags', () => {
+  let dir;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crcf-'));
+    fs.writeFileSync(
+      path.join(dir, '20260628-mmm3.md'),
+      'id: 20260628-mmm3\ncancelled_at: 2026-07-20T00:00:00Z\ncancel_reason: x\n',
+    );
+    fs.writeFileSync(path.join(dir, '20260628-nnn4.md'), 'id: 20260628-nnn4\nstatus: failed\n');
+  });
+  after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('flags a failed row whose task file carries cancelled_at: as cancelled', () => {
+    const registry = [{ id: '20260628-mmm3', status: 'failed', summary: 'cancelled row' }];
+    const out = computeRegistryCancelledFlags(registry, dir);
+    assert.equal(out[0].cancelled, true);
+    assert.equal(out[0].status, 'failed', 'registry status field itself is never mutated');
+  });
+
+  test('does not flag a failed row with no cancelled_at: marker', () => {
+    const registry = [{ id: '20260628-nnn4', status: 'failed', summary: 'genuine failure' }];
+    const out = computeRegistryCancelledFlags(registry, dir);
+    assert.equal(out[0].cancelled, false);
+  });
+
+  test('does not read the task file (or flag cancelled) for a non-failed row', () => {
+    const registry = [{ id: '20260628-mmm3', status: 'running', summary: 'still running' }];
+    const out = computeRegistryCancelledFlags(registry, dir);
+    assert.equal(out[0].cancelled, false);
+  });
+
+  test('handles a missing task file gracefully', () => {
+    const registry = [{ id: '20260628-ghost', status: 'failed', summary: 'no task file on disk' }];
+    const out = computeRegistryCancelledFlags(registry, dir);
+    assert.equal(out[0].cancelled, false);
   });
 });
 
@@ -579,6 +675,47 @@ describe('buildLaunchdAgents', () => {
     }
   });
 
+  test('includes com.inbox-zero.* plist first-class (no LAUNCHD_WATCH needed)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-launchd-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'com.orchestrate.fake.plist'), MINIMAL_PLIST('com.orchestrate.fake', 300));
+      fs.writeFileSync(path.join(dir, 'com.inbox-zero.catchup.plist'), MINIMAL_PLIST('com.inbox-zero.catchup', 3600));
+      // No extraLabels argument: the glob alone must surface the inbox-zero job.
+      const agents = buildLaunchdAgents(dir, '- 0 com.orchestrate.fake\n- 0 com.inbox-zero.catchup\n');
+      assert.equal(agents.length, 2, 'both orchestrate and inbox-zero jobs present');
+      const emailJob = agents.find(a => a.label === 'com.inbox-zero.catchup');
+      assert.ok(emailJob, 'com.inbox-zero.catchup must be present without LAUNCHD_WATCH');
+      assert.equal(emailJob.interval, '1 hr');
+      assert.equal(emailJob.status, 'ok');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('com.inbox-zero.* not duplicated when also in LAUNCHD_WATCH', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-launchd-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'com.inbox-zero.catchup.plist'), MINIMAL_PLIST('com.inbox-zero.catchup', 3600));
+      const agents = buildLaunchdAgents(dir, '- 0 com.inbox-zero.catchup\n', '', null, ['com.inbox-zero.catchup']);
+      assert.equal(agents.length, 1, 'glob + LAUNCHD_WATCH must not duplicate the row');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('ignores unrelated com.* plists (e.g. com.google.*)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-launchd-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'com.orchestrate.fake.plist'), MINIMAL_PLIST('com.orchestrate.fake', 300));
+      fs.writeFileSync(path.join(dir, 'com.google.keystone.agent.plist'), MINIMAL_PLIST('com.google.keystone.agent', 300));
+      const agents = buildLaunchdAgents(dir, '- 0 com.orchestrate.fake\n');
+      assert.equal(agents.length, 1, 'only orchestrate/inbox-zero prefixes are surfaced');
+      assert.equal(agents[0].label, 'com.orchestrate.fake');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('silently skips extra label when plist does not exist', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-launchd-'));
     try {
@@ -677,7 +814,7 @@ describe('parseTendHealth', () => {
   });
 
   test('detects run-job syntax error in stderr', () => {
-    const err = '/path/to/project/.orchestrate/bin/run-job.sh: line 203: syntax error near unexpected token `)\'\n';
+    const err = '~/apps/my-project/.orchestrate/bin/run-job.sh: line 203: syntax error near unexpected token `)\'\n';
     const r = parseTendHealth(tmp, '', err, { pid: '-', exitStatus: '0' });
     assert.equal(r.status, 'failed');
     assert.match(r.message, /syntax error/i);
@@ -791,7 +928,11 @@ test('/api/launchd returns array with correct shape', async () => {
   const { status, body } = await get('/api/launchd');
   assert.equal(status, 200);
   assert.ok(Array.isArray(body), 'body should be an array');
-  assert.ok(body.length >= 1, 'should have at least 1 launchd agent on this machine');
+  // Count is driven by the injected ORCH_TEST_LAUNCHD_DIR fixture (two seeded
+  // plists), not the live host's ~/Library/LaunchAgents — hermetic and stable.
+  assert.equal(body.length, 2, 'should surface exactly the two seeded fixture plists');
+  const labels = body.map(i => i.label).sort();
+  assert.deepEqual(labels, ['com.inbox-zero.catchup', 'com.orchestrate.tend']);
   for (const item of body) {
     assert.ok('label' in item, 'item has label');
     assert.ok('interval' in item, 'item has interval');
@@ -828,6 +969,117 @@ describe('manifestMatchesRegistry', () => {
       manifestMatchesRegistry('20260619-171925-20260619-inbox-CF-cursor-fallback.md', '20260619-inbox-CF'),
       true,
     );
+  });
+});
+
+/** Load index.html client helpers for parity checks (parseIsoUtc + isInDefaultHistoryWindow). */
+function loadClientIsInDefaultHistoryWindow() {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const parseIsoMatch = html.match(/function parseIsoUtc\(iso\) \{[\s\S]*?\n\}/);
+  const windowMatch = html.match(/function isInDefaultHistoryWindow\(iso, nowMs\) \{[\s\S]*?\n\}/);
+  assert.ok(parseIsoMatch && windowMatch, 'index.html must define parseIsoUtc and isInDefaultHistoryWindow');
+  const sandbox = {};
+  vm.runInNewContext(`${parseIsoMatch[0]}\n${windowMatch[0]}`, sandbox);
+  return sandbox.isInDefaultHistoryWindow;
+}
+
+describe('History day-bucket / today-boundary (UTC↔Eastern rollover)', () => {
+  test('HISTORY_TZ is America/New_York (matches index.html Eastern bucketing)', () => {
+    assert.equal(HISTORY_TZ, 'America/New_York');
+  });
+
+  test('a post-local-midnight UTC instant buckets to the prior Eastern day', () => {
+    // 2026-06-30T03:30:00Z == 2026-06-29 23:30 EDT → Eastern day is 2026-06-29.
+    assert.equal(historyEasternYmd('2026-06-30T03:30:00Z'), '2026-06-29');
+  });
+
+  test('timezone-less ISO is treated as UTC, not local', () => {
+    assert.equal(historyEasternYmd('2026-06-30T03:30:00'), '2026-06-29');
+  });
+
+  test('default window keeps a just-completed task visible after local midnight rolls over', () => {
+    // "now" = 2026-06-30T04:02Z (00:02 EDT on 2026-06-30). A task completed at
+    // 2026-06-30T03:30Z (23:30 EDT on 2026-06-29) is on the *previous* Eastern
+    // day, but only ~32 min old — it must still show in the default view.
+    const now = Date.parse('2026-06-30T04:02:00Z');
+    assert.equal(isInDefaultHistoryWindow('2026-06-30T03:30:00Z', now), true);
+  });
+
+  test('all 7 DASH-1 completion timestamps are in the default window at the boundary', () => {
+    const now = Date.parse('2026-06-30T04:02:00Z');
+    const stamps = [
+      '2026-06-30T03:27:00Z', '2026-06-30T03:27:00Z', '2026-06-30T03:34:00Z',
+      '2026-06-30T03:37:00Z', '2026-06-30T03:40:00Z', '2026-06-30T03:31:00Z',
+      '2026-06-30T03:44:00Z',
+    ];
+    for (const s of stamps) {
+      assert.equal(isInDefaultHistoryWindow(s, now), true, `expected ${s} in default window`);
+    }
+  });
+
+  test('a genuinely old row (>24h, different Eastern day) is excluded from the default window', () => {
+    const now = Date.parse('2026-06-30T04:02:00Z');
+    assert.equal(isInDefaultHistoryWindow('2026-06-27T12:00:00Z', now), false);
+  });
+
+  test('todays Eastern-day row is in-window even when older than 24h is not required', () => {
+    const now = Date.parse('2026-06-30T20:00:00Z'); // 16:00 EDT 2026-06-30
+    // 2026-06-30T05:00Z == 01:00 EDT 2026-06-30 → same Eastern day, ~15h old.
+    assert.equal(isInDefaultHistoryWindow('2026-06-30T05:00:00Z', now), true);
+  });
+
+  test('isoToDate returns null for blank/garbage and a Date for valid input', () => {
+    assert.equal(isoToDate(''), null);
+    assert.equal(isoToDate('not-a-date'), null);
+    assert.ok(isoToDate('2026-06-30T03:30:00Z') instanceof Date);
+  });
+
+  test('index.html isInDefaultHistoryWindow matches server for boundary fixtures', () => {
+    const clientFn = loadClientIsInDefaultHistoryWindow();
+    const now = Date.parse('2026-06-30T04:02:00Z');
+    const fixtures = [
+      '2026-06-30T03:30:00Z',
+      '2026-06-30T03:27:00Z',
+      '2026-06-30T03:44:00Z',
+      '2026-06-27T12:00:00Z',
+      '2026-06-30T05:00:00Z',
+    ];
+    for (const iso of fixtures) {
+      assert.equal(
+        clientFn(iso, now),
+        isInDefaultHistoryWindow(iso, now),
+        `client/server parity for ${iso}`,
+      );
+    }
+  });
+
+  test('archive-less registry-only rows at DASH-1 boundary pass default-window filter', () => {
+    const now = Date.parse('2026-06-30T04:02:00Z');
+    const dash1 = [
+      { id: '20260630-inbox-2E3C', ts: '2026-06-30T03:27:00Z' },
+      { id: '20260630-inbox-55E6', ts: '2026-06-30T03:27:00Z' },
+      { id: '20260630-inbox-F843', ts: '2026-06-30T03:34:00Z' },
+      { id: '20260630-inbox-5BE9', ts: '2026-06-30T03:37:00Z' },
+      { id: '20260630-inbox-CA80', ts: '2026-06-30T03:40:00Z' },
+      { id: '20260630-inbox-8D05', ts: '2026-06-30T03:31:00Z' },
+      { id: '20260630-inbox-CAFF', ts: '2026-06-30T03:44:00Z' },
+    ];
+    const registry = dash1.map(({ id, ts }) => ({
+      id,
+      summary: `DASH-1 boundary task ${id}`,
+      status: 'complete',
+      last_activity: ts,
+    }));
+    const rows = buildHistoryRows(registry, [], {}, '');
+    assert.equal(rows.length, 7, 'each archive-less complete row must render');
+    for (const row of rows) {
+      assert.equal(row.hasArchive, false, `${row.taskId} is registry-only stub`);
+      assert.equal(
+        isInDefaultHistoryWindow(row.dateIso, now),
+        true,
+        `${row.taskId} at ${row.dateIso} must stay in default today view`,
+      );
+    }
   });
 });
 
@@ -1015,6 +1267,91 @@ describe('buildHistoryRows', () => {
     const rows = buildHistoryRows(registry, manifest, entries, '');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].dateIso, '2026-06-20T12:00:00Z');
+  });
+
+  test('MON-1: a failed+cancelled registry row with a matching MANIFEST entry is included, labeled "Cancelled"', () => {
+    const registry = [{
+      id: '20260628-mmm3',
+      summary: 'cancelled row',
+      status: 'failed',
+      cancelled: true,
+      last_activity: '2026-07-20T00:00:00Z',
+    }];
+    const manifest = [{
+      date: '2026-07-20',
+      filename: '20260720-000000-20260628-mmm3-cancelled-row.md',
+      summary: 'cancelled row',
+      tags: 'orchestrate, watchdog, auto-finalize',
+    }];
+    const entries = {
+      '20260720-000000-20260628-mmm3-cancelled-row.md': 'cancelled_at: 2026-07-20T00:00:00Z\n',
+    };
+
+    const rows = buildHistoryRows(registry, manifest, entries, '');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, 'Cancelled');
+  });
+
+  test('MON-1: a failed row with cancelled: false/absent and no MANIFEST match is still excluded', () => {
+    const registry = [{
+      id: '20260628-nnn4',
+      summary: 'genuine failure, still running',
+      status: 'failed',
+      last_activity: '2026-07-20T00:00:00Z',
+    }];
+    const rows = buildHistoryRows(registry, [], {}, '');
+    assert.equal(rows.length, 0, 'a plain failed row (not cancelled) must not be over-widened into History');
+  });
+});
+
+/**
+ * Load index.html's Active Tasks filter predicate for direct unit coverage.
+ *
+ * MON-1 gap: renderTasks() (the function containing this predicate) is not a
+ * standalone/pure function — it touches document.getElementById and other
+ * DOM/global state, so it can't be vm-sandboxed wholesale like
+ * parseIsoUtc/isInDefaultHistoryWindow above. Extract just the filter
+ * predicate expression via the same "regex out of the raw source, then
+ * vm.runInNewContext" technique already used elsewhere in this file, so the
+ * exact client-side logic that excludes cancelled rows from Active Tasks
+ * (previously untested — server.test.js only ever covered server.js) gets
+ * real behavioral coverage instead of only being exercised by eyeballing a diff.
+ */
+function loadClientActiveTasksFilterPredicate() {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const match = html.match(/const allActive = \(registry \|\| \[\]\)\.filter\((r => [^)]*)\)/);
+  assert.ok(match, 'index.html must define the allActive filter predicate in renderTasks()');
+  const sandbox = {};
+  vm.runInNewContext(`predicate = (${match[1]})`, sandbox);
+  return sandbox.predicate;
+}
+
+describe('index.html Active Tasks filter (MON-1: excludes cancelled rows)', () => {
+  test('excludes a failed+cancelled row', () => {
+    const predicate = loadClientActiveTasksFilterPredicate();
+    assert.equal(predicate({ status: 'failed', cancelled: true }), false);
+  });
+
+  test('excludes a complete row (pre-existing behavior, unchanged by MON-1)', () => {
+    const predicate = loadClientActiveTasksFilterPredicate();
+    assert.equal(predicate({ status: 'complete', cancelled: false }), false);
+  });
+
+  test('includes a genuinely failed row (not cancelled) — regression guard', () => {
+    const predicate = loadClientActiveTasksFilterPredicate();
+    assert.equal(predicate({ status: 'failed', cancelled: false }), true);
+  });
+
+  test('includes a genuinely failed row with cancelled undefined (legacy rows with no marker)', () => {
+    const predicate = loadClientActiveTasksFilterPredicate();
+    assert.equal(predicate({ status: 'failed' }), true);
+  });
+
+  test('includes ordinary in-progress statuses (pending, running, awaiting_go, awaiting_critic)', () => {
+    const predicate = loadClientActiveTasksFilterPredicate();
+    for (const status of ['pending', 'running', 'awaiting_go', 'awaiting_critic', 'needs_human']) {
+      assert.equal(predicate({ status, cancelled: false }), true, `expected ${status} to remain active`);
+    }
   });
 });
 
@@ -1448,6 +1785,48 @@ describe('approveRegistryTask', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
+  test('cancel: stamps durable cancelled_at: + cancel_reason: on task file; classifies as Cancelled, distinct from a real failure', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cancel-marker-test-'));
+    makeTestProject(tmp);
+    // Pre-existing task file body that should be preserved under the marker.
+    const tasksDir = path.join(tmp, '.orchestrate', 'tasks');
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.writeFileSync(path.join(tasksDir, 'test-gated.md'), 'id: test-gated\nstatus: awaiting_go\n### Phase 1\n');
+
+    const result = approveRegistryTask(tmp, 'test-gated', 'cancel', 'no longer needed');
+    assert.equal(result.success, true);
+    assert.equal(result.status, 'failed', 'registry status stays failed (no new enum value)');
+    assert.equal(result.cancelled, true);
+
+    const tf = fs.readFileSync(path.join(tasksDir, 'test-gated.md'), 'utf8');
+    assert.match(tf, /^cancelled_at: \d{4}-\d{2}-\d{2}T/m, 'durable cancelled_at: marker stamped');
+    assert.match(tf, /^cancel_reason: no longer needed$/m, 'cancel_reason recorded');
+    assert.ok(tf.includes('### Phase 1'), 'original task body preserved');
+
+    // A cancelled row classifies "Cancelled"; a real failure (no marker) classifies "Failed".
+    assert.equal(isCancelledTask(tf), true);
+    const cancelledInfo = taskApprovalInfo({ status: 'failed', cancelled: true });
+    assert.equal(cancelledInfo.approvalLabel, 'Cancelled');
+    assert.equal(cancelledInfo.needsApproval, false);
+    const realFailInfo = taskApprovalInfo({ status: 'failed' });
+    assert.equal(realFailInfo.approvalLabel, 'Failed — review required');
+    assert.equal(realFailInfo.needsApproval, true);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('cancel: creates a minimal marked task file when none exists', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cancel-nofile-test-'));
+    makeTestProject(tmp);
+    const result = approveRegistryTask(tmp, 'test-gated', 'cancel');
+    assert.equal(result.success, true);
+    const tfPath = path.join(tmp, '.orchestrate', 'tasks', 'test-gated.md');
+    assert.ok(fs.existsSync(tfPath), 'minimal task file created');
+    const tf = fs.readFileSync(tfPath, 'utf8');
+    assert.match(tf, /^cancelled_at: /m);
+    assert.match(tf, /^cancel_reason: /m, 'default cancel_reason present');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
   test('appends approval entry to heartbeat.log', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'approve-hb-test-'));
     makeTestProject(tmp);
@@ -1544,5 +1923,210 @@ describe('kube reviews', () => {
     assert.equal(body.status, 'dismissed');
     assert.ok(!fs.existsSync(path.join(pendingDir, 'api-dismiss-kube.json')));
     assert.ok(fs.existsSync(path.join(tmpDir, '.orchestrate', 'kube-reviews', 'processed', 'api-dismiss-kube.json')));
+  });
+});
+
+describe('registry invariant (NF==8 row corruption hardening — C319)', () => {
+  test('formatRegistryRow emits exactly 6 columns / NF==8', () => {
+    const row = formatRegistryRow(['20260627-x', 'My task', 'auto', '2', 'pending', '2026-06-27T18:00:00Z']);
+    assert.equal(row, '| 20260627-x | My task | auto | 2 | pending | 2026-06-27T18:00:00Z |');
+    assert.equal(row.split('|').length, 8); // matches awk -F'|' NF==8
+  });
+
+  test('formatRegistryRow sanitizes embedded pipes in a cell (no phantom column)', () => {
+    const row = formatRegistryRow(['id1', 'summary with | a pipe', 'auto', '1', 'running', 'ts']);
+    assert.equal(row.split('|').length, 8);
+    assert.ok(!/summary with \| a pipe/.test(row));
+    assert.ok(/summary with \/ a pipe/.test(row));
+  });
+
+  test('formatRegistryRow strips newlines that would break the row', () => {
+    const row = formatRegistryRow(['id1', 'line1\nline2', 'auto', '1', 'pending', 'ts']);
+    assert.equal(row.split('\n').length, 1);
+    assert.equal(row.split('|').length, 8);
+  });
+
+  test('formatRegistryRow throws when not given exactly 6 cells', () => {
+    assert.throws(() => formatRegistryRow(['a', 'b', 'c']), /expected 6 cells/);
+    assert.throws(() => formatRegistryRow('not an array'), /expected 6 cells/);
+  });
+
+  test('checkRegistryInvariant flags a malformed (extra phantom column) row', () => {
+    const content = [
+      '## Task Registry',
+      '| ID | summary | mode | current_phase | status | last_activity |',
+      '|----|---------|------|---------------|--------|---------------|',
+      '| 20260627-ok | good row | auto | 1 | complete | 2026-06-27T18:00:00Z |',
+      '| 20260627-bad | corrupt | auto | 1 | running | 2026-06-27T18:00:00Z | 2026-06-27T18:05:00Z', // phantom 7th field, no trailing pipe
+    ].join('\n');
+    const res = checkRegistryInvariant(content);
+    assert.equal(res.healthy, false);
+    assert.equal(res.badRows.length, 1);
+    assert.ok(/20260627-bad/.test(res.badRows[0]));
+  });
+
+  test('checkRegistryInvariant reports healthy when all rows are NF==8', () => {
+    const content = [
+      '| 20260627-a | task a | auto | 1 | complete | 2026-06-27T18:00:00Z |',
+      '| 20260627-b | task b | auto | 2 | pending | 2026-06-27T18:01:00Z |',
+    ].join('\n');
+    const res = checkRegistryInvariant(content);
+    assert.equal(res.healthy, true);
+    assert.equal(res.badRows.length, 0);
+  });
+
+  test('checkRegistryInvariant flags a field-shift row (mode out of domain, still NF==8)', () => {
+    // Off-by-one awk update overwrote the mode column with a phase number ("2").
+    // Row is NF==8 with an empty trailing $8, so the structural check passes —
+    // only the domain check (mode ∈ {auto,gated}) catches it.
+    const content = [
+      '| 20260628-ok | good row | auto | 1 | complete | 2026-06-28T18:00:00Z |',
+      '| 20260628-shift | shifted row | 2 | 1 | complete | 2026-06-28T18:00:00Z |',
+    ].join('\n');
+    const res = checkRegistryInvariant(content);
+    assert.equal(res.healthy, false);
+    assert.equal(res.badRows.length, 1);
+    assert.ok(/20260628-shift/.test(res.badRows[0]));
+  });
+
+  test('checkRegistryInvariant flags a row with status out of domain (still NF==8)', () => {
+    const content = [
+      '| 20260628-bs | bad status | auto | 1 | finished | 2026-06-28T18:00:00Z |',
+    ].join('\n');
+    const res = checkRegistryInvariant(content);
+    assert.equal(res.healthy, false);
+    assert.equal(res.badRows.length, 1);
+    assert.ok(/20260628-bs/.test(res.badRows[0]));
+  });
+});
+
+describe('parseRegistry', () => {
+  test('parses all rows of a contiguous registry table', () => {
+    const content = [
+      '# Orchestrate', '', '## Shared Context', '- prose', '', '## Task Registry', '',
+      '| ID | Summary | Mode | Current Phase | Status | Last Activity |',
+      '|----|---------|------|---------------|--------|---------------|',
+      '| 20260625-inbox-A | task a | auto | 1 | complete | 2026-06-25T10:00:00Z |',
+      '| 20260630-inbox-B | task b | gated | 2 | awaiting_go | 2026-06-30T03:44:00Z |',
+    ].join('\n');
+    const rows = parseRegistry(content);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1].id, '20260630-inbox-B');
+    assert.equal(rows[1].status, 'awaiting_go');
+  });
+
+  // Regression: a `## `/`# ` heading inserted after — or splitting — the registry
+  // table must NOT truncate the parse. The old section regex stopped at the first
+  // following heading, silently dropping every newer completion from the History tab
+  // (symptom: "the History tab's newest row is days old / finished tasks missing").
+  test('does NOT truncate at a heading that splits/trails the registry table', () => {
+    const content = [
+      '## Task Registry', '',
+      '| ID | Summary | Mode | Current Phase | Status | Last Activity |',
+      '|----|---------|------|---------------|--------|---------------|',
+      '| 20260625-inbox-OLD | older | auto | 1 | complete | 2026-06-25T10:00:00Z |',
+      '', '## A Trailing Section That Splits The Table', '- stray heading after the registry', '',
+      '| 20260630-inbox-NEW | newer | auto | 1 | complete | 2026-06-30T03:44:00Z |',
+    ].join('\n');
+    const rows = parseRegistry(content);
+    const ids = rows.map(r => r.id);
+    assert.ok(ids.includes('20260630-inbox-NEW'), 'newer row after the split heading must be parsed');
+    assert.equal(rows.length, 2);
+  });
+
+  test('returns empty when there is no Task Registry section', () => {
+    assert.deepEqual(parseRegistry('# Orchestrate\n\n## Shared Context\n- prose\n'), []);
+  });
+});
+
+// ── tendHealth hermetic-injection contract (165E) ─────────────────────────────
+// Pins that /api/tasks body.tendHealth.ok is driven SOLELY by the injected
+// ORCH_TEST_LAUNCHCTL fixture (com.orchestrate.tend LastExitStatus) — never the
+// live host launchd state. The root before() server only exercises the HEALTHY
+// direction; this block spawns its own servers on private ports to prove BOTH:
+//   (a) a FAILING injected listing (nonzero exit) → tendHealth.ok === false
+//   (b) a HEALTHY injected listing (exit 0)       → tendHealth.ok === true
+// Same injected fixture, opposite outcomes ⇒ the value comes from injection, not
+// the host. The pre-165E bug was that a nonzero exit on the real com.orchestrate.tend
+// job leaked into these fixture assertions and flaked them.
+describe('tendHealth hermetic injection contract (165E)', () => {
+  let hermeticTmp;
+  const spawned = [];
+
+  function getFrom(port, pathname) {
+    return new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}${pathname}`, (res) => {
+        let raw = '';
+        res.on('data', c => raw += c);
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+          catch (_) { resolve({ status: res.statusCode, body: raw }); }
+        });
+      }).on('error', reject);
+    });
+  }
+
+  function spawnServer(port, launchctlFixture) {
+    const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+      cwd: hermeticTmp,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        ORCH_TEST_LAUNCHCTL: launchctlFixture,
+      },
+      stdio: 'pipe',
+    });
+    spawned.push(proc);
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`server ${port} start timeout`)), 5000);
+      proc.stdout.on('data', (chunk) => {
+        if (chunk.toString().includes('listening')) { clearTimeout(timeout); resolve(proc); }
+      });
+      proc.on('error', (err) => { clearTimeout(timeout); reject(err); });
+    });
+  }
+
+  before(() => {
+    // Minimal fixture: a clean .orchestrate/logs so no heartbeat/lock signal can
+    // flip tendHealth — the launchctl exit status is the ONLY variable under test.
+    hermeticTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-hermetic-'));
+    fs.mkdirSync(path.join(hermeticTmp, '.orchestrate', 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(hermeticTmp, '.orchestrate', 'agent.conf'), 'RUNNER=claude\n');
+    // handleTasks early-returns a tendHealth-less payload when project.md is absent,
+    // so a (registry-empty) project.md is required to exercise the full response.
+    fs.writeFileSync(path.join(hermeticTmp, '.orchestrate', 'project.md'), [
+      '# Orchestrate — hermetic fixture',
+      '',
+      '## Task Registry',
+      '| ID | summary | mode | current_phase | status | last_activity |',
+      '|----|---------|------|---------------|--------|---------------|',
+    ].join('\n') + '\n');
+  });
+
+  after(() => {
+    for (const p of spawned) { try { p.kill(); } catch (_) {} }
+    if (hermeticTmp) fs.rmSync(hermeticTmp, { recursive: true, force: true });
+  });
+
+  test('injected FAILING launchctl (exit 1) flips /api/tasks tendHealth.ok to false', async () => {
+    await spawnServer(7846, '- 1 com.orchestrate.tend\n');
+    const { status, body } = await getFrom(7846, '/api/tasks');
+    assert.equal(status, 200);
+    assert.equal(body.tendHealth.ok, false, 'nonzero injected exit must drive ok=false');
+    assert.equal(body.tendHealth.status, 'failed');
+    assert.ok(Array.isArray(body.attention.tendIssues));
+    assert.equal(body.attention.tendIssues.length, 1, 'failing tend surfaces one tendIssue');
+    assert.equal(body.attention.tendIssues[0].status, 'failed');
+  });
+
+  test('injected HEALTHY launchctl (exit 0) keeps /api/tasks tendHealth.ok true', async () => {
+    // Same fixture cwd, opposite injected exit → opposite outcome. This is the
+    // proof that ok is injection-driven, not read from the live host.
+    await spawnServer(7847, '- 0 com.orchestrate.tend\n');
+    const { status, body } = await getFrom(7847, '/api/tasks');
+    assert.equal(status, 200);
+    assert.equal(body.tendHealth.ok, true, 'exit 0 injected listing must drive ok=true');
+    assert.equal(body.tendHealth.status, 'ok');
+    assert.equal(body.attention.tendIssues.length, 0);
   });
 });
