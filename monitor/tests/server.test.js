@@ -3,6 +3,7 @@
 const { test, before, after, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
+const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -10,9 +11,23 @@ const { spawn } = require('child_process');
 const vm = require('vm');
 const { parseRegistry, intervalLabel, buildLaunchdAgents, tendThrottleHint, parseTendHealth, readTendMode, readAgentConf, readRunner, readAgentStatus, isCursorIdeRunning, isTendGoAuto, taskApprovalInfo, isCancelledTask, computeRegistryCancelledFlags, stampCancelMarker, parseInboxMeta, isCompletedInboxFile, manifestMatchesRegistry, archiveDateFromFilename, resolveHistoryDatetime, HISTORY_TZ, historyEasternYmd, isInDefaultHistoryWindow, isoToDate, isPlaceholderTimestamp, isFutureTimestamp, buildCompletionHints, findHistoryEntry, loadHistoryEntries, buildHistoryRows, historyStats, historyCoverage, extractTaskIdFromFilename, collectTaskLogContent, synthesizeHistoryStub, findInboxSourceForTask, approveRegistryTask, listKubeReviews, approveKubeReview, formatRegistryRow, checkRegistryInvariant } = require('../server');
 
-const TEST_PORT = 7843;
+// Ephemeral port, not a hardcoded 7843 — avoids collisions with a stray/orphaned
+// monitor/server.js (or ai-console's own monitor, which shares the same default
+// port) already listening when this suite starts.
+let TEST_PORT;
 let tmpDir;
 let serverProcess;
+
+function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
 
 function get(pathname) {
   return new Promise((resolve, reject) => {
@@ -59,6 +74,8 @@ function post(pathname, payload) {
 }
 
 before(async () => {
+  TEST_PORT = await getFreePort();
+
   // Fixture: minimal .orchestrate layout
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-test-'));
   const orch = path.join(tmpDir, '.orchestrate');
