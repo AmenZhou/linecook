@@ -216,7 +216,9 @@ head -15 obsidian/Core/some-page.md
 
 - [ ] `/grounded-investigate` skill installed and callable
 - [ ] Can run `grounded-investigate` on a sample question
-- [ ] `/code-review ultra` is available (or equivalent review process)
+- [ ] `/smart-code-review` skill installed and callable (ticket-aware code review)
+- [ ] `/address-code-review` skill installed and callable (follow-through on review findings)
+- [ ] `/code-review ultra` is available (or equivalent multi-lens review process)
 - [ ] Test suite exists for your primary project
 - [ ] Pre-commit hooks configured for linting/type-checking
 - [ ] `make test` or `npm test` or equivalent runs tests
@@ -369,8 +371,10 @@ EOF
 
 **Gap: Skills not installed**
 ```bash
-# For Claude Code CLI:
-claude sync-skills  # or run sync.sh in ai-toolbox
+# task-breakdown and task-orchestrate ship with linecook — symlink them in
+# (run from the linecook repo root):
+ln -s "$(pwd)/skills/task-breakdown" ~/.claude/skills/task-breakdown
+ln -s "$(pwd)/skills/task-orchestrate" ~/.claude/skills/task-orchestrate
 
 # Verify:
 /task-breakdown --help
