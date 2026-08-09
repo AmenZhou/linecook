@@ -2,10 +2,6 @@
 
 > *Clip a ticket, it works the rail.*
 
-<p align="center">
-  <img src="docs/assets/hero.jpg" alt="A robot line cook, BOTTY, works a kitchen pass — the linecook project packages a Claude Code setup guide and a legacy autonomous task-runner." width="100%">
-</p>
-
 **Claude Code Setup — Assessment & Gap Finding guide.**
 
 linecook ships a self-audit guide for your local [Claude Code](https://claude.com/claude-code) setup: a single markdown document that walks you through 4 pillars — security, orchestration, LLM context, and quality gates — and tells you what's missing before it causes a problem.
