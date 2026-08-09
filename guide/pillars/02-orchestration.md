@@ -10,7 +10,7 @@ A two-skill stack for turning a spec into executed work: `task-breakdown` plans 
 
 ## Where it lives
 
-| Source | Path (in ai-toolbox) | What it provides |
+| Source | Path (embedded in linecook) | What it provides |
 |---|---|---|
 | task-breakdown skill | `skills/task-breakdown/SKILL.md` | Turns a spec, plan doc, or rough notes into a single task-orchestrate task plan — every unit of work expressed as four chained phases (Investigation/Plan → Challenge → Implementation → Verification) |
 | task-orchestrate skill | `skills/task-orchestrate/SKILL.md` | Executes a task plan: maintains a project-scoped control plane (`.orchestrate/`) and task registry, runs phases inline or via spawned agents, manual go/go-auto and synchronous — no background watchdog, inbox queue, or heartbeat (that async subsystem was removed upstream) |
@@ -18,9 +18,9 @@ A two-skill stack for turning a spec into executed work: `task-breakdown` plans 
 ## How to get it
 
 ```bash
-git clone https://github.com/AmenZhou/ai-toolbox.git
-ln -s "$PWD/ai-toolbox/skills/task-breakdown" ~/.claude/skills/task-breakdown
-ln -s "$PWD/ai-toolbox/skills/task-orchestrate" ~/.claude/skills/task-orchestrate
+# Both skills ship with linecook — no clone needed. Run from the linecook repo root:
+ln -s "$(pwd)/skills/task-breakdown" ~/.claude/skills/task-breakdown
+ln -s "$(pwd)/skills/task-orchestrate" ~/.claude/skills/task-orchestrate
 ```
 
 ## What it does for you
