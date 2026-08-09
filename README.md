@@ -3,191 +3,64 @@
 > *Clip a ticket, it works the rail.*
 
 <p align="center">
-  <img src="docs/assets/hero.jpg" alt="A robot line cook, BOTTY, works a kitchen pass: repo issues ride a conveyor into a triage bin, task tickets hang on the rail above the stove, code panels glow over the pans, and finished plates go out marked DONE & MERGED — all under a LAUNCHD HEARTBEAT monitor reading SYSTEM STABILITY: OPTIMAL." width="100%">
+  <img src="docs/assets/hero.jpg" alt="A robot line cook, BOTTY, works a kitchen pass — the linecook project packages a Claude Code setup guide and a legacy autonomous task-runner." width="100%">
 </p>
 
-<p align="center"><em>You clip the ticket. linecook works the rail.</em></p>
+**Claude Code Setup — Assessment & Gap Finding guide.**
 
-**Inbox & Orchestrate — autonomous background jobs for [Claude Code](https://claude.com/claude-code), driven by text files and your own laptop.**
+linecook ships a self-audit guide for your local [Claude Code](https://claude.com/claude-code) setup: a single markdown document that walks you through 4 pillars — security, orchestration, LLM context, and quality gates — and tells you what's missing before it causes a problem.
 
-Drop a markdown file into a folder. A macOS `launchd` heartbeat picks it up, an AI harness runs it through structured phases, and the result lands in an archive. No servers, no dashboards in the cloud, no babysitting — just text files and the machine already on your desk.
-
-> 📊 **Slide deck:** [inbox-orchestrate.vercel.app](https://inbox-orchestrate.vercel.app/) · also bundled at [`docs/slides/inbox-orchestrate.html`](docs/slides/inbox-orchestrate.html)
+Start here: **[`guide/ASSESSMENT.md`](guide/ASSESSMENT.md)**
 
 ---
 
-## Think of it like a kitchen
+## The Assessment Guide
 
-| Kitchen | This system |
-|---------|-------------|
-| You write an order ticket | You write a task file (`# Goal / # Context / # Acceptance Criteria`) |
-| You clip it to the rail | You drop the file in `inbox/` |
-| The line cook works the ticket | The AI harness runs the **orchestrate** skill through phases |
-| The plate goes out, ticket spiked | The result is archived to `orchestrate-history/` |
+[`guide/ASSESSMENT.md`](guide/ASSESSMENT.md) is a 15–30 minute self-audit. For each of the 4 pillars it gives you:
 
-You are the one writing tickets. The kitchen runs itself.
+- A checklist of what a solid setup has
+- Shell commands to check whether *you* have it
+- A prioritized **Gap Priority Matrix** (Critical / High / Medium / Low) once you're done
+- An **Assessment Scorecard** to track what's implemented vs. missing over time
 
----
-
-## Why this exists
-
-1. **Autonomous with a harness** — Claude Code executes an entire workflow (research → plan → build → verify) without human supervision.
-2. **Async execution** — tasks run in the background while you focus on something else. Fire and forget.
-3. **`launchd` for repeated jobs** — macOS's built-in scheduler gives OS-level reliability for recurring work. No daemon to keep alive, no cron string to babysit. If the laptop is awake, the heartbeat fires.
+No install, no server, no dependency on this repo staying on disk — it's a document you read and act on.
 
 ---
 
-## How it flows
+## 4-Pillar Reference
 
-```
-   ┌──────────────┐     drop .md      ┌──────────────────────┐
-   │   You (or a  │ ───────────────►  │  .orchestrate/inbox/  │
-   │  daily cron) │                   └──────────┬───────────┘
-   └──────────────┘                              │ every 5 min
-                                                 ▼
-                        ┌────────────────────────────────────────┐
-                        │  launchd heartbeat → run-job.sh          │
-                        │   • cleanup-stale-inbox.sh               │
-                        │   • drain-inbox.sh   (register tasks)    │
-                        │   • tend-need-action.sh (skip if idle)   │
-                        └────────────────────┬─────────────────────┘
-                                             │ NEED_ACTION=1
-                                             ▼
-                        ┌────────────────────────────────────────┐
-                        │  Harness runs the orchestrate skill     │
-                        │   Research → Strategy → Execute → QA     │
-                        │   reads/writes .orchestrate/project.md   │
-                        └────────────────────┬─────────────────────┘
-                                             ▼
-                        ┌────────────────────────────────────────┐
-                        │  orchestrate-history/  (archive + MANIFEST) │
-                        │  monitor dashboard  → http://127.0.0.1:7842 │
-                        └────────────────────────────────────────┘
-```
+Each pillar has its own doc with a deeper checklist, gap-finding commands, and links to the skill/tool that fills the gap.
 
-The **registry** (`.orchestrate/project.md`) is the system's to-do list and shared memory; the **archive** (`orchestrate-history/`) is its long-term record.
+| Pillar | Covers | Doc |
+|---|---|---|
+| 1. Security | Deny-list permissions, PreToolUse hooks, secrets protection | [`guide/pillars/01-security.md`](guide/pillars/01-security.md) |
+| 2. Orchestration | task-breakdown + task-orchestrate, control plane, go-gate | [`guide/pillars/02-orchestration.md`](guide/pillars/02-orchestration.md) |
+| 3. LLM Context | Wiki-first protocol, wiki-query/wiki-context-pack/wiki-ingest | [`guide/pillars/03-llm-context.md`](guide/pillars/03-llm-context.md) |
+| 4. Quality Gates | grounded-investigate, smart-code-review, address-code-review | [`guide/pillars/04-quality-gates.md`](guide/pillars/04-quality-gates.md) |
+
+Each pillar doc links back to the Assessment Guide, and each pillar lists its own install steps for the tools it references — most come from [`ai-toolbox`](https://github.com/AmenZhou/ai-toolbox), though Pillar 3's wiki tools are a separate `obsidian-wiki` pip package (see that doc for the split). linecook itself doesn't install or run those tools — it's the guide that tells you which ones you're missing.
 
 ---
 
-## Task lifecycle — a job from drop to archive
+## Why this guide exists
 
-| Stage | What happens |
-|-------|--------------|
-| **1. Dispatch** | You write a markdown task file and drop it in `.orchestrate/inbox/`. |
-| **2. Pickup** | `launchd` fires `run-job.sh` → `drain-inbox.sh` registers the task in the registry. |
-| **3. Execute** | The harness runs the orchestrate skill through its phases, updating shared context. |
-| **4. Complete** | Output archived to `orchestrate-history/`; registry row marked `complete`. |
+Local Claude Code setups accumulate gaps quietly — a missing deny-list pattern, no orchestration skill, no context strategy, no review gate — and those gaps usually surface as an incident rather than a warning. This guide exists to make the audit explicit and repeatable:
 
-State machine: `pending → running → awaiting_critic → complete → archived` (with `awaiting_go`, `needs_human`, `failed` as branches).
+1. **Structured** — 4 pillars instead of a vague "is my setup good?" feeling.
+2. **Actionable** — every checklist item pairs with a command to check it and a doc for how to fix it.
+3. **Prioritized** — the Gap Priority Matrix tells you what to fix first, not just what's missing.
 
 ---
 
-## The inbox task file format
+## Getting the guide
 
-```markdown
-# Fix the rate-limit bug in the API service
-
-## Goal
-Rate limiter throws 429 after 100 req/s. Make it sliding-window per IP and
-return Retry-After. What must be true when done: every route in src/routes/
-honors the limit and unit tests cover the boundary.
-
-## Context
-Entry point is src/app.ts. We already use express-rate-limit in a sibling service.
-
-## Acceptance Criteria
-- All routes return 429 after the limit, with Retry-After header
-- Unit tests cover the limit boundary
-```
-
-**Modes:**
-
-| Mode | Behavior |
-|------|----------|
-| `auto` (default) | Runs every phase unattended. Safe, reversible work. |
-| `gated` | Pauses before risky ops (DB writes, `rm`/`mv` of tracked files, live `kubectl`, sending email, force-push). Requires an explicit human "go". |
-
-Gating is **risk-based, not location-based** — a safe task filed under `gated/` is de-gated automatically; only genuine risky ops (or an explicit `gate_reason:` line) hold a task for human approval.
-
----
-
-## Install
-
-Requires macOS (for `launchd`), [Claude Code](https://claude.com/claude-code) (or `cursor-agent`), and Node 18+ (for the monitor only).
+There's no install step — clone the repo and read the markdown.
 
 ```bash
-# Install the background watchdog + scripts into a target project
-PROJECT_DIR="$HOME/apps/my-project" bash install.sh
+git clone https://github.com/AmenZhou/linecook.git
+cd linecook
+open guide/ASSESSMENT.md   # or just read it in your editor
 ```
-
-This will:
-
-1. Create the `.orchestrate/` control plane in your project (registry, inbox, tasks, logs).
-2. Copy the runtime scripts into `$PROJECT_DIR/.orchestrate/bin/`.
-3. Render and load the `launchd` agents (`com.orchestrate.tend`, `com.orchestrate.rescue`, `com.orchestrate.monitor`).
-4. Create `.orchestrate/agent.conf` (choose `RUNNER=claude` or `RUNNER=cursor`).
-
-To run a single cycle manually at any time, type `tend` in a Claude Code session inside the project — or:
-
-```bash
-bash $PROJECT_DIR/.orchestrate/bin/run-job.sh tend
-```
-
-Switch runner without reloading launchd:
-
-```bash
-bash $PROJECT_DIR/.orchestrate/bin/set-runner.sh claude   # or cursor
-```
-
-Uninstall:
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.orchestrate.tend.plist
-```
-
----
-
-## The orchestrate skill
-
-The brains of the system is a Claude Code skill ([`skill/SKILL.md`](skill/SKILL.md)). Install it by symlinking into your skills directory:
-
-```bash
-ln -s "$PWD/skill" ~/.claude/skills/task-orchestrate
-```
-
-Then invoke it directly:
-
-```
-/task-orchestrate add rate limiting to all API endpoints and write tests
-go auto
-```
-
-| Invocation | Mode |
-|------------|------|
-| `tend` | Watchdog: drain inbox, advance stalled tasks, notify |
-| `tend go auto` | Watchdog + auto-execute pending tasks in parallel batches of 3 |
-| `inbox` | Show pending inbox items, wait for triage |
-| `inbox go auto` | Triage + execute all approved items unattended |
-| `resume` | List active tasks, pick one to continue |
-| any other text | Plan and execute a new task |
-
-See [`skill/GUIDE.md`](skill/GUIDE.md) for the full walkthrough and [`docs/architecture.md`](docs/architecture.md) for component internals.
-
----
-
-## Monitor dashboard
-
-A zero-dependency Node.js dashboard ships in [`monitor/`](monitor/):
-
-```bash
-cd /path/to/my-project          # where .orchestrate/ lives
-node /path/to/linecook/monitor/server.js
-# → http://127.0.0.1:7842
-```
-
-- **Active Tasks** — live registry, status badges, phase progress, per-phase log viewer (auto-refresh 15s).
-- **History** — searchable archive of every completed run from `orchestrate-history/`.
-- **LaunchD** — flip the runner between `claude` and `cursor` without touching `launchctl`.
 
 ---
 
@@ -196,63 +69,31 @@ node /path/to/linecook/monitor/server.js
 ```
 linecook/
 ├── README.md                  # this file
-├── install.sh                 # standalone installer for any project
 ├── LICENSE
-├── skill/
-│   ├── SKILL.md               # the orchestrate skill (loaded by Claude Code)
-│   └── GUIDE.md               # use cases, examples, setup walkthrough
-├── bin/                       # runtime scripts (the inbox workflow engine)
-│   ├── run-job.sh             #   launchd entrypoint: lock, dispatch, fallback
-│   ├── drain-inbox.sh         #   register inbox files into the registry
-│   ├── cleanup-stale-inbox.sh #   move processed/stale inbox files aside
-│   ├── tend-need-action.sh    #   decide whether a cycle needs the agent
-│   ├── rescue.sh              #   recover stuck/stale tasks
-│   ├── first-pass-auto-resolve.sh, requeue-unblocked.sh  # self-unblock logic
-│   ├── set-runner.sh          #   switch claude ↔ cursor
-│   ├── enqueue-analyzer-daily.sh  # daily companion-job enqueuer
-│   ├── install-launchd.sh     #   original launchd installer (reference)
-│   └── agent.conf.example
-├── launchd/                   # plist templates (rendered by install.sh)
-│   ├── com.orchestrate.tend.plist
-│   ├── com.orchestrate.rescue.plist
-│   └── com.orchestrate.monitor.plist
-├── monitor/                   # zero-dep Node.js dashboard
-│   ├── server.js · index.html · package.json · tests/
-├── tests/                     # shell + node test suites
-├── examples/inbox/            # sample task files to copy into your inbox
+├── .gitignore
+├── guide/
+│   ├── ASSESSMENT.md          # the hero doc — Assessment & Gap Finding guide (self-audit across 4 pillars)
+│   └── pillars/
+│       ├── 01-security.md         # deny-list + hooks (permission-audit skill)
+│       ├── 02-orchestration.md    # task-breakdown + task-orchestrate skills
+│       ├── 03-llm-context.md      # wiki-first protocol + wiki-* tools
+│       └── 04-quality-gates.md    # grounded-investigate + smart-code-review + address-code-review
 └── docs/
-    ├── architecture.md
-    └── slides/inbox-orchestrate.html
+    └── assets/
+        └── hero.jpg            # header illustration
 ```
 
 ---
 
-## Tests
+## Legacy: Background Automation
 
-```bash
-bash tests/test-task-orchestrate.sh       # control-plane invariants + bin/ scripts present
-bash tests/test-run-job.sh                # launchd dispatch (mock claude/cursor)
-node monitor/tests/server.test.js         # dashboard API routes
-
-# per-script regression tests
-bash tests/test-append-manifest-line.sh
-bash tests/test-append-phase-log.sh
-bash tests/test-churn-guard.sh
-bash tests/test-detect-orphaned-awaiting-go.sh
-bash tests/test-finalize-completed-tasks.sh
-bash tests/test-first-pass-auto-resolve.sh
-bash tests/test-followup-dedup.sh
-bash tests/test-requeue-orphaned-running.sh
-bash tests/test-update-registry-row.sh
-
-node tests/test-launch-agent.js           # tend plist registration (requires install.sh first)
-```
+Earlier versions of linecook were an autonomous inbox-and-launchd job runner — drop a task file in `.orchestrate/inbox/`, a macOS `launchd` heartbeat picked it up, and a harness ran it through structured phases to an archive. That full system (installer, `bin/` scripts, `launchd/` plists, the Node.js monitor dashboard, and its test suites) has been moved out of this branch's history and lives on [`archive/background-automation`](../../tree/archive/background-automation). Check out that branch if you want the original autonomous-inbox tool rather than the setup guide.
 
 ---
 
 ## Provenance
 
-Packaged from a personal Claude Code `task-orchestrate` skill and its `.orchestrate/` control plane into a standalone, self-contained, installable system.
+Originally packaged from a personal Claude Code `task-orchestrate` skill and its `.orchestrate/` control plane into a standalone, self-contained, installable system. As of the `guide-ai-setup` restructuring, the repo's primary artifact is the Assessment & Gap Finding guide; the original inbox/orchestrate automation lives on [`archive/background-automation`](../../tree/archive/background-automation).
 
 ## License
 
