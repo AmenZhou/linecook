@@ -11,22 +11,22 @@ An agent that can run arbitrary commands needs an explicit deny-list, not an hon
 
 ## Where it lives
 
-| Source | Path (in ai-toolbox) | What it provides |
+| Source | Path (embedded in linecook) | What it provides |
 |---|---|---|
 | permission-audit skill | `skills/permission-audit/SKILL.md` | Audits Claude Code / Cursor permission configs for gaps: secrets exposure, overly-broad globs, parity drift, hook regression |
-| Safety instructions | `instructions/safety.md` | The deny-list conventions and destructive-operation confirmation rules this pillar follows |
+| Safety instructions | `guide/safety.md` | The deny-list conventions and destructive-operation confirmation rules this pillar follows |
 
 ## How to get it
 
 ```bash
-git clone https://github.com/AmenZhou/ai-toolbox.git
-ln -s "$PWD/ai-toolbox/skills/permission-audit" ~/.claude/skills/permission-audit
+# Both permission-audit skill and safety guidance ship with linecook — no clone needed. Run from the linecook repo root:
+ln -s "$(pwd)/skills/permission-audit" ~/.claude/skills/permission-audit
 ```
 
-`instructions/safety.md` is not a skill — read it and adapt its rules into your own project's `CLAUDE.md` or global instructions rather than symlinking it.
+`guide/safety.md` (shipped with linecook) is not a skill — read it and adapt its rules into your own project's `CLAUDE.md` or global instructions as your deny-list policy.
 
 ## What it does for you
 
-`permission-audit` scans your global (`~/.claude/`, `~/.cursor/`) and project-level permission files, checks them against known vulnerability classes (secrets exposure, overly-broad allow globs, Claude/Cursor parity drift, hook regressions), and emits both a machine-readable JSON report and a human-readable Markdown report — including regression detection against a known-good baseline, so you can tell whether a recent change reopened a gap you'd already closed. `instructions/safety.md` supplies the underlying policy it checks against: always ask before deleting or overwriting files, never use destructive commands without confirmation, and scope risky operations instead of blanket-allowing them.
+`permission-audit` scans your global (`~/.claude/`, `~/.cursor/`) and project-level permission files, checks them against known vulnerability classes (secrets exposure, overly-broad allow globs, Claude/Cursor parity drift, hook regressions), and emits both a machine-readable JSON report and a human-readable Markdown report — including regression detection against a known-good baseline, so you can tell whether a recent change reopened a gap you'd already closed. `guide/safety.md` supplies the underlying policy it checks against: always ask before deleting or overwriting files, never use destructive commands without confirmation, and scope risky operations instead of blanket-allowing them.
 
 **Back to:** [Assessment & Gap Finding Guide](../ASSESSMENT.md)
