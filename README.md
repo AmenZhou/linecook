@@ -38,7 +38,7 @@ Each pillar has its own doc with a deeper checklist, gap-finding commands, and l
 | 3. LLM Context | Wiki-first protocol, wiki-query/wiki-context-pack/wiki-ingest | [`guide/pillars/03-llm-context.md`](guide/pillars/03-llm-context.md) |
 | 4. Quality Gates | grounded-investigate, smart-code-review, address-code-review | [`guide/pillars/04-quality-gates.md`](guide/pillars/04-quality-gates.md) |
 
-Each pillar doc links back to the Assessment Guide, and each pillar lists its own install steps for the tools it references — most come from [`ai-toolbox`](https://github.com/AmenZhou/ai-toolbox), though Pillar 3's wiki tools are a separate `obsidian-wiki` pip package (see that doc for the split). linecook itself doesn't install or run those tools — it's the guide that tells you which ones you're missing.
+Each pillar doc links back to the Assessment Guide, and each pillar lists its own install steps for the tools it references — all 6 core skills now ship embedded in this repo under [`skills/`](skills/), safety policy is embedded at [`guide/safety.md`](guide/safety.md), and Pillar 3's wiki-query/wiki-context-pack/wiki-ingest tools are a separate `obsidian-wiki` pip package (see that doc for the split). linecook is now fully self-contained — no external ai-toolbox clone required. The guide tells you which tools you're missing and where each one now lives.
 
 ---
 
@@ -71,8 +71,26 @@ linecook/
 ├── README.md                  # this file
 ├── LICENSE
 ├── .gitignore
+├── skills/
+│   ├── permission-audit/
+│   │   ├── SKILL.md               # deny-list + hook-regression audit
+│   │   └── bin/
+│   │       ├── cli.sh
+│   │       └── permission-audit.sh
+│   ├── task-breakdown/
+│   │   └── SKILL.md               # decompose a job into a task-orchestrate plan
+│   ├── task-orchestrate/
+│   │   └── SKILL.md               # execute a task plan through phased, gated steps
+│   ├── grounded-investigate/
+│   │   └── SKILL.md               # wiki-first, dual-method investigation
+│   ├── smart-code-review/
+│   │   └── SKILL.md               # ticket-aware review + OWASP pass, posts inline findings
+│   └── address-code-review/
+│       └── SKILL.md               # pulls review findings back, fixes valid ones, replies to threads
 ├── guide/
 │   ├── ASSESSMENT.md          # the hero doc — Assessment & Gap Finding guide (self-audit across 4 pillars)
+│   ├── wiki-first.md          # wiki-first research protocol (referenced by Pillar 3)
+│   ├── safety.md              # destructive-operation confirmation policy (referenced by Pillar 1)
 │   └── pillars/
 │       ├── 01-security.md         # deny-list + hooks (permission-audit skill)
 │       ├── 02-orchestration.md    # task-breakdown + task-orchestrate skills
