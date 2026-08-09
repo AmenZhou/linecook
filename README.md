@@ -2,6 +2,8 @@
 
 > *Clip a ticket, it works the rail.*
 
+![Assessment Scorecard: 4 pillars — Security, Orchestration, LLM Context, Quality Gates](docs/assets/assessment-scorecard.svg)
+
 **Claude Code Setup — Assessment & Gap Finding guide.**
 
 linecook ships a self-audit guide for your local [Claude Code](https://claude.com/claude-code) setup: a single markdown document that walks you through 4 pillars — security, orchestration, LLM context, and quality gates — and tells you what's missing before it causes a problem.

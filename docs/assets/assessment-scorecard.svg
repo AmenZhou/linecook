@@ -1,0 +1,104 @@
+<svg viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="800" height="400" fill="#f9fafb"/>
+
+  <!-- Title -->
+  <text x="400" y="40" font-size="28" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Claude Code Setup Assessment
+  </text>
+  <text x="400" y="65" font-size="14" text-anchor="middle" fill="#6b7280">
+    4 Pillars | Self-Audit Guide
+  </text>
+
+  <!-- Pillar 1: Security -->
+  <g>
+    <!-- Card background -->
+    <rect x="30" y="100" width="160" height="260" rx="8" fill="#fff" stroke="#e5e7eb" stroke-width="1"/>
+
+    <!-- Checkbox icon -->
+    <rect x="50" y="120" width="28" height="28" rx="4" fill="#ef4444" stroke="#ef4444" stroke-width="2"/>
+    <text x="64" y="142" font-size="18" font-weight="bold" text-anchor="middle" fill="white">✓</text>
+
+    <!-- Title -->
+    <text x="100" y="145" font-size="14" font-weight="bold" fill="#1f2937">Security</text>
+
+    <!-- Items -->
+    <text x="50" y="175" font-size="12" fill="#374151">□ Permission config</text>
+    <text x="50" y="200" font-size="12" fill="#374151">□ Deny-list patterns</text>
+    <text x="50" y="225" font-size="12" fill="#374151">□ PreToolUse hooks</text>
+    <text x="50" y="250" font-size="12" fill="#374151">□ K8s mutations gated</text>
+    <text x="50" y="275" font-size="12" fill="#374151">□ Secrets protected</text>
+
+    <!-- Status -->
+    <text x="100" y="330" font-size="11" font-weight="600" text-anchor="middle" fill="#6b7280">Start: permission-audit</text>
+  </g>
+
+  <!-- Pillar 2: Orchestration -->
+  <g>
+    <!-- Card background -->
+    <rect x="210" y="100" width="160" height="260" rx="8" fill="#fff" stroke="#e5e7eb" stroke-width="1"/>
+
+    <!-- Checkbox icon -->
+    <rect x="230" y="120" width="28" height="28" rx="4" fill="#f59e0b" stroke="#f59e0b" stroke-width="2"/>
+    <text x="244" y="142" font-size="18" font-weight="bold" text-anchor="middle" fill="white">✓</text>
+
+    <!-- Title -->
+    <text x="280" y="145" font-size="14" font-weight="bold" fill="#1f2937">Orchestration</text>
+
+    <!-- Items -->
+    <text x="230" y="175" font-size="12" fill="#374151">□ task-breakdown</text>
+    <text x="230" y="200" font-size="12" fill="#374151">□ task-orchestrate</text>
+    <text x="230" y="225" font-size="12" fill="#374151">□ .orchestrate/ setup</text>
+    <text x="230" y="250" font-size="12" fill="#374151">□ Task registry</text>
+    <text x="230" y="275" font-size="12" fill="#374151">□ End-to-end execution</text>
+
+    <!-- Status -->
+    <text x="280" y="330" font-size="11" font-weight="600" text-anchor="middle" fill="#6b7280">Start: task-breakdown</text>
+  </g>
+
+  <!-- Pillar 3: LLM Context -->
+  <g>
+    <!-- Card background -->
+    <rect x="390" y="100" width="160" height="260" rx="8" fill="#fff" stroke="#e5e7eb" stroke-width="1"/>
+
+    <!-- Checkbox icon -->
+    <rect x="410" y="120" width="28" height="28" rx="4" fill="#8b5cf6" stroke="#8b5cf6" stroke-width="2"/>
+    <text x="424" y="142" font-size="18" font-weight="bold" text-anchor="middle" fill="white">✓</text>
+
+    <!-- Title -->
+    <text x="460" y="145" font-size="14" font-weight="bold" fill="#1f2937">LLM Context</text>
+
+    <!-- Items -->
+    <text x="410" y="175" font-size="12" fill="#374151">□ Wiki-first protocol</text>
+    <text x="410" y="200" font-size="12" fill="#374151">□ grounded-investigate</text>
+    <text x="410" y="225" font-size="12" fill="#374151">□ obsidian-wiki setup</text>
+    <text x="410" y="250" font-size="12" fill="#374151">□ Context retrieval</text>
+    <text x="410" y="275" font-size="12" fill="#374151">□ Dual-method search</text>
+
+    <!-- Status -->
+    <text x="460" y="330" font-size="11" font-weight="600" text-anchor="middle" fill="#6b7280">Start: wiki-setup</text>
+  </g>
+
+  <!-- Pillar 4: Quality Gates -->
+  <g>
+    <!-- Card background -->
+    <rect x="570" y="100" width="160" height="260" rx="8" fill="#fff" stroke="#e5e7eb" stroke-width="1"/>
+
+    <!-- Checkbox icon -->
+    <rect x="590" y="120" width="28" height="28" rx="4" fill="#10b981" stroke="#10b981" stroke-width="2"/>
+    <text x="604" y="142" font-size="18" font-weight="bold" text-anchor="middle" fill="white">✓</text>
+
+    <!-- Title -->
+    <text x="640" y="145" font-size="14" font-weight="bold" fill="#1f2937">Quality Gates</text>
+
+    <!-- Items -->
+    <text x="590" y="175" font-size="12" fill="#374151">□ Investigation skill</text>
+    <text x="590" y="200" font-size="12" fill="#374151">□ Code review process</text>
+    <text x="590" y="225" font-size="12" fill="#374151">□ smart-code-review</text>
+    <text x="590" y="250" font-size="12" fill="#374151">□ address-code-review</text>
+    <text x="590" y="275" font-size="12" fill="#374151">□ Test suite active</text>
+
+    <!-- Status -->
+    <text x="640" y="330" font-size="11" font-weight="600" text-anchor="middle" fill="#6b7280">Start: grounded-investigate</text>
+  </g>
+</svg>
