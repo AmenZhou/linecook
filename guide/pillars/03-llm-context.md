@@ -10,13 +10,13 @@ A lookup discipline for checking what's already known — wiki, then project mem
 
 ## Where it lives
 
-**ai-toolbox-sourced:**
+**Embedded in linecook:**
 
-| Source | Path (in ai-toolbox) | What it provides |
+| Source | Path (embedded in linecook) | What it provides |
 |---|---|---|
-| Wiki-first instructions | `instructions/wiki-first.md` | The lookup sequence (wiki → project memory → CLAUDE.md → route investigation) plus the decision tree for when to invoke `grounded-investigate` vs. a lightweight lookup vs. asking the user |
+| Wiki-first instructions | `guide/wiki-first.md` | The lookup sequence (wiki → project memory → CLAUDE.md → route investigation) plus the decision tree for when to invoke `grounded-investigate` vs. a lightweight lookup vs. asking the user |
 
-**NOT ai-toolbox-sourced (pip-symlinked from the `obsidian_wiki` package):**
+**Not embedded — pip-symlinked from the `obsidian_wiki` package:**
 
 | Tool | Where installed | Source |
 |---|---|---|
@@ -27,12 +27,12 @@ A lookup discipline for checking what's already known — wiki, then project mem
 ## How to get it
 
 ```bash
-git clone https://github.com/AmenZhou/ai-toolbox.git   # for instructions/wiki-first.md
-pip install obsidian-wiki                                # for wiki-query / wiki-context-pack / wiki-ingest — a separate package, not ai-toolbox
+# guide/wiki-first.md ships with linecook — no clone needed, just read it.
+pip install obsidian-wiki   # for wiki-query / wiki-context-pack / wiki-ingest — a separate package, not linecook or ai-toolbox
 ```
 
 ## What it does for you
 
-These two provenances do different jobs and are installed differently — don't go looking for the wiki tools inside an `ai-toolbox` clone, they aren't there. `instructions/wiki-first.md` is the protocol: it tells an agent to check the wiki, then project memory, then CLAUDE.md before deciding whether a question needs a full `grounded-investigate` pass, a quick grep, a direct answer, or a question back to the user — read it and fold it into your own instructions file. `wiki-query`, `wiki-context-pack`, and `wiki-ingest` are the actual tools that protocol calls out to: `wiki-query` answers a question from the compiled wiki, `wiki-context-pack` produces a token-bounded context slice for a downstream agent, and `wiki-ingest` distills new documents into wiki pages. All three ship with the `obsidian-wiki` Python package (install via `pip install obsidian-wiki`, or your own fork) — they are maintained separately from ai-toolbox, not built there.
+These two provenances do different jobs and are installed differently — don't go looking for the wiki tools inside the linecook repo, they aren't there; only the protocol doc is. `guide/wiki-first.md` is the protocol: it tells an agent to check the wiki, then project memory, then CLAUDE.md before deciding whether a question needs a full `grounded-investigate` pass, a quick grep, a direct answer, or a question back to the user — read it and fold it into your own instructions file. `wiki-query`, `wiki-context-pack`, and `wiki-ingest` are the actual tools that protocol calls out to: `wiki-query` answers a question from the compiled wiki, `wiki-context-pack` produces a token-bounded context slice for a downstream agent, and `wiki-ingest` distills new documents into wiki pages. All three ship with the `obsidian-wiki` Python package (install via `pip install obsidian-wiki`, or your own fork) — they are maintained separately, not part of linecook.
 
 **Back to:** [Assessment & Gap Finding Guide](../ASSESSMENT.md)
