@@ -17,3 +17,6 @@ npm-debug.log*
 
 # build/verify artifacts
 .verify.log
+
+# Investigation & analysis reports (working documents, not project deliverables)
+reports/
