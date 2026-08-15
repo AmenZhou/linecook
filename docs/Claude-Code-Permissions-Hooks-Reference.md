@@ -1,8 +1,9 @@
 # Claude Code Permissions & Safety Hooks
 
-**Last Updated:** 2026-08-14  
+**Last Updated:** 2026-08-15  
 **Author:** Configuration system  
 **Purpose:** Document the permission model, hook system, and safety guardrails in Claude Code
+**Status:** ✅ Production-ready (77 tests passing, all hooks active)
 
 ---
 
@@ -10,18 +11,32 @@
 
 **Scope:** Complete documentation of Claude Code's permission model, safety hooks, and configuration.
 
-**What's Covered:**
-✅ Global permission config (allow/deny/ask)  
-✅ Settings hierarchy (global/project/local layers)  
-✅ 7 active PreToolUse hooks (kube, pg, graphify, restrict-paths, wiki-research, typescript, rtk)  
-✅ 4 scope-check helper scripts (rm-mv, redirect, search, chmod)  
-✅ 1 PostToolUse hook (graphify usage logging)  
-✅ Design principles and interaction examples  
-✅ Debugging guide  
+**Current Configuration (2026-08-15):**
+- ✅ Allow list: 16 patterns (core tools + kubectl + ~/.claude folder)
+- ✅ Deny list: 43 patterns (8 security categories, 17 added for privilege escalation)
+- ✅ Ask list: 90 patterns (high-risk operations, 8 added for risky permissions)
+- ✅ Active hooks: 7 PreToolUse + 1 PostToolUse (all operational)
+- ✅ Scope-check helpers: 4 scripts (all symlinked and active)
+- ✅ Test coverage: 77 assertions (all passing)
 
-**Known Gaps:**
-⚠️ `chmod-scope-check.py` and `redirect-scope-check.py` exist but NOT symlinked → currently inactive  
-⚠️ `fix-settings-hooks.sh` and `install-kube-hook.sh` are helpers, not active hooks  
+**What's Covered:**
+✅ Global permission config (allow/deny/ask with 149 total patterns)  
+✅ Settings hierarchy (global + project-level overrides)  
+✅ 7 active PreToolUse hooks (kube, pg, graphify, restrict-paths, wiki-research, typescript, rtk)  
+✅ 4 active scope-check helper scripts (chmod, redirect, rm-mv, search — all symlinked)  
+✅ 1 PostToolUse hook (output optimization)  
+✅ kubectl tiered gating (read-only, dry-run, live mutating)  
+✅ PostgreSQL tiered gating (SELECT, preview, mutations)  
+✅ Design principles, defense-in-depth model, and interaction examples  
+✅ Debugging guide and comprehensive testing  
+
+**Recent Improvements (2026-08-15):**
+✅ Activated missing symlinks: chmod-scope-check.py, redirect-scope-check.py  
+✅ Added 17 deny patterns (setuid/setgid, system file moves, reverse shells)  
+✅ Added 8 ask patterns (risky permissions, symlinks, umask operations)  
+✅ Added 6 allow patterns (~/.claude folder access, absolute + relative paths)  
+✅ Added project-level settings override in ai-console  
+✅ Built comprehensive test suite (77 assertions, all passing)  
 
 **Tools Covered:**
 - `Bash` — 7 active hooks + 4 scope-check sub-validators
@@ -99,13 +114,82 @@ This document covers the three layers with examples and design rationale.
 - `Agent` — subagent spawning
 - `Bash(kubectl exec:*)` — read-only kubectl container access
 
-### Deny List (Hard Block)
+### Deny List (Hard Block) — 43 Patterns
 
-**Never executed**, even on user request:
-- `Bash(rm -rf /*)` — destructive from root
-- `Bash(rm -rf ~*)` — destructive from home
+**Never executed**, even on user request. Catastrophic operations across 8 security categories:
 
-This reflects the design principle: **catastrophic operations are never permitted, not just gated**.
+#### Destructive File Operations (3)
+- `Bash(rm -rf /*)` — delete entire filesystem from root
+- `Bash(rm -rf ~*)` — delete home directory recursively
+- `Bash(find * -exec*)` — arbitrary command chaining with find
+
+#### Shell Injection (2)
+- `Bash(curl * | sh)` — download and execute scripts
+- `Bash(wget * | sh)` — wget variant of script piping
+
+#### System Shutdown/Control (3)
+- `Bash(shutdown*)` — system shutdown
+- `Bash(reboot*)` — system restart
+- `Bash(poweroff*)` — power off
+
+#### Cross-Filesystem Searches (5)
+- `Bash(grep * //*)` — grep from filesystem root
+- `Bash(find //*)` — find from filesystem root
+- `Bash(rg * //*)` — ripgrep from filesystem root
+- `Bash(fd * //*)` — fd from filesystem root
+- `Bash(ag * //*)` — ag from filesystem root
+
+#### Device Access & Filesystem Mutation (6)
+- `Bash(dd if=/dev/*)` — direct device read/write
+- `Bash(mount *)` — mount filesystems
+- `Bash(umount*)` — unmount filesystems
+- `Bash(mkfs*)` — create filesystems
+- `Bash(shred*)` — secure file deletion
+- `Bash(chmod 777*)` — world-writable permissions
+
+#### Privilege Escalation (2)
+- `Bash(sudo -i*)` — interactive root shell
+- `Bash(sudo su*)` — switch to root
+
+#### Kernel/Module Operations (3)
+- `Bash(modprobe*)` — load kernel modules
+- `Bash(insmod*)` — insert kernel module
+- `Bash(rmmod*)` — remove kernel module
+
+#### Unrecoverable Data Operations (1)
+- `Bash(truncate -s 0*)` — zero out file contents
+
+#### GitHub CLI (1)
+- `Bash(gh repo delete*)` — delete repository
+
+#### Privilege Escalation via Permissions (5) — NEW 2026-08-15
+- `Bash(chmod u+s*)` — setuid bit (local root escalation)
+- `Bash(chmod g+s*)` — setgid bit (group escalation)
+- `Bash(chmod *[4286][7654][7654][7654]*)` — octal setuid/setgid patterns
+- `Bash(chown root*)` — change owner to root
+- `Bash(chown 0:*)` — change owner by UID 0
+
+#### System File Moves (8) — NEW 2026-08-15
+- `Bash(mv * /etc/*)` — move to system config
+- `Bash(mv * /System/*)` — move to macOS frameworks
+- `Bash(mv * /usr/*)` — move to user binaries
+- `Bash(mv * /bin/*)` — move to core binaries
+- `Bash(mv * /sbin/*)` — move to admin binaries
+- `Bash(mv * /Library/*)` — move to system libraries
+- `Bash(mv * ~/.ssh/**)` — move to SSH keys (auth hijack)
+- `Bash(mv * ~/.aws/**)` — move to AWS credentials
+
+#### Reverse Shell Primitives (2) — NEW 2026-08-15
+- `Bash(exec *<>/dev/tcp/*)` — TCP reverse shell
+- `Bash(exec *<>/dev/udp/*)` — UDP reverse shell
+
+#### Recursive System Operations (1) — NEW 2026-08-15
+- `Bash(chmod -R * /*)` — recursive chmod from root
+
+#### Recursive Ownership Changes (1) — NEW 2026-08-15
+- `Bash(chown -R root*)` — recursive ownership to root
+
+**Design Principle:** Catastrophic operations are never permitted, not just gated for confirmation.
 
 ### Ask List (Confirmation Gate)
 
@@ -152,6 +236,21 @@ These patterns require explicit user confirmation:
 
 #### Credential/Secret Write/Edit
 - `Write`/`Edit` to `.env*`, `.aws/**`, `.ssh/**`, `.credentials`, `*.pem`, `*.key`
+
+#### Risky Permission Operations (8) — NEW 2026-08-15
+- `Bash(chmod 000*)` — remove all permissions (denial of service)
+- `Bash(chmod 666*)` — world-writable files
+- `Bash(umask 000*)` — make all subsequent files world-readable
+- `Bash(xattr -d com.apple.quarantine*)` — bypass Gatekeeper on unsigned binaries
+- `Bash(chgrp *:staff*)` — expand access to broad system group
+- `Bash(chgrp *:everyone*)` — expand access to all users
+- `Bash(ln -s * /tmp/*)` — symlink in shared /tmp (TOCTOU attack)
+- `Bash(ln -s * /var/tmp/*)` — symlink in shared /var/tmp (TOCTOU attack)
+
+#### System Service Control (3)
+- `Bash(launchctl load *)` — load system service
+- `Bash(launchctl unload *)` — unload system service
+- `Bash(launchctl bootout *)` — remove boot service
 
 ---
 
