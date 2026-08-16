@@ -975,6 +975,7 @@ ls -la .orchestrate/kube-reviews/approved/
 - **CLAUDE.md** — User instructions, including permission model overview
 - **Security-Review** — Audit of credential access patterns
 - **Permission Settings Audit (2026-07-07)** — Historical decisions on scope narrowing
+- **Design Pattern: Allow-List + Safety-Gate Hooks** — Strategic overview of permission + hook architecture
 - **Auto-Allow Plus Hook-Safeguard Pattern** — Design pattern for permission + hook layering
 
 ---
